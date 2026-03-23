@@ -1,16 +1,49 @@
 /**
  * Room Durable Object — manages a single watch-party room.
- * SQLite-backed per PRD requirement.
+ *
+ * Handles WebSocket connections with hibernation API, authentication,
+ * message relay, presence notifications, session replacement, and expiry.
  */
 
 import { DurableObject } from "cloudflare:workers";
 
+// ── Constants ───────────────────────────────────────────────────
+
 /** 24 hours in milliseconds. */
 const ROOM_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Time allowed for a client to send auth after connecting. */
+const AUTH_TIMEOUT_MS = 10_000;
 
 /** Room code: 6 chars from human-friendly alphabet. */
 const ROOM_CODE_LENGTH = 6;
 const ROOM_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+
+const MAX_MESSAGE_SIZE_BYTES = 8192;
+const PROTOCOL_VERSION = 1;
+const MAX_PARTICIPANTS = 2;
+
+/** Message types that get relayed to the peer as-is. */
+const RELAY_TYPES: ReadonlySet<string> = new Set([
+  "play",
+  "pause",
+  "seek",
+  "speed",
+  "heartbeat",
+  "state",
+  "warning",
+  "goodbye",
+]);
+
+// ── Types ───────────────────────────────────────────────────────
+
+/** Metadata attached to each WebSocket via serializeAttachment. */
+interface WsAttachment {
+  authenticated: boolean;
+  sessionId: string;
+  role: string;
+  connectedAtMs: number;
+}
 
 function isValidRoomCode(code: string): boolean {
   if (code.length !== ROOM_CODE_LENGTH) return false;
@@ -20,10 +53,11 @@ function isValidRoomCode(code: string): boolean {
   return true;
 }
 
+// ── Durable Object ──────────────────────────────────────────────
+
 export class Room extends DurableObject {
   constructor(ctx: DurableObjectState, env: unknown) {
     super(ctx, env);
-    // Ensure schema exists on first instantiation
     this.ctx.storage.sql.exec(
       `CREATE TABLE IF NOT EXISTS room_meta (
         room_code TEXT PRIMARY KEY,
@@ -32,18 +66,16 @@ export class Room extends DurableObject {
         expires_at_ms INTEGER NOT NULL
       )`,
     );
+    this.ctx.storage.sql.exec(
+      `CREATE TABLE IF NOT EXISTS participants (
+        session_id TEXT PRIMARY KEY,
+        role TEXT NOT NULL
+      )`,
+    );
   }
 
-  /**
-   * Handle incoming requests routed from the Worker.
-   *
-   * Internal routes (called by the Worker, not exposed externally):
-   *   POST /init — Initialize a new room with code and secret hash.
-   *   GET /status — Check if the room exists and is not expired.
-   *
-   * External routes (forwarded from the Worker):
-   *   WebSocket upgrade — Join the room as host or guest.
-   */
+  // ── HTTP Router ─────────────────────────────────────────────
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
@@ -55,21 +87,361 @@ export class Room extends DurableObject {
       return this.handleStatus();
     }
 
-    // WebSocket upgrade will be implemented in the Durable Object auth/relay phase
     const upgradeHeader = request.headers.get("Upgrade");
     if (upgradeHeader?.toLowerCase() === "websocket") {
-      return new Response("WebSocket handler not yet implemented", {
-        status: 501,
-      });
+      return this.handleWebSocketUpgrade();
     }
 
     return new Response("Not Found", { status: 404 });
   }
 
+  // ── WebSocket Hibernation Handlers ──────────────────────────
+
+  async webSocketMessage(
+    ws: WebSocket,
+    message: string | ArrayBuffer,
+  ): Promise<void> {
+    // Reject binary messages
+    if (typeof message !== "string") {
+      this.sendServerMessage(ws, "error", {
+        code: "invalid-format",
+        message: "Binary messages not supported",
+      });
+      return;
+    }
+
+    // Size check
+    if (new TextEncoder().encode(message).byteLength > MAX_MESSAGE_SIZE_BYTES) {
+      this.sendServerMessage(ws, "error", {
+        code: "message-too-large",
+        message: `Exceeds ${MAX_MESSAGE_SIZE_BYTES} bytes`,
+      });
+      return;
+    }
+
+    // Parse JSON
+    let parsed: Record<string, unknown>;
+    try {
+      const raw = JSON.parse(message);
+      if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+        this.sendServerMessage(ws, "error", {
+          code: "invalid-format",
+          message: "Must be a JSON object",
+        });
+        return;
+      }
+      parsed = raw;
+    } catch {
+      this.sendServerMessage(ws, "error", {
+        code: "invalid-json",
+        message: "Invalid JSON",
+      });
+      return;
+    }
+
+    const att = this.getAttachment(ws);
+
+    // Unauthenticated — must send auth first
+    if (!att.authenticated) {
+      if (parsed.type === "auth") {
+        await this.handleAuth(ws, parsed, att);
+      } else {
+        this.sendServerMessage(ws, "auth-error", {
+          code: "not-authenticated",
+          message: "First message must be auth",
+        });
+        ws.close(4001, "Not authenticated");
+      }
+      return;
+    }
+
+    // Authenticated — validate message type
+    const type = parsed.type;
+    if (typeof type !== "string" || !RELAY_TYPES.has(type)) {
+      this.sendServerMessage(ws, "error", {
+        code: "invalid-type",
+        message: "Invalid or non-relayable message type",
+      });
+      return;
+    }
+
+    // Goodbye: relay, notify, remove participant, close
+    if (type === "goodbye") {
+      this.relayToPeer(ws, message);
+      this.notifyPeerLeft(ws);
+      if (att.sessionId) {
+        this.ctx.storage.sql.exec(
+          "DELETE FROM participants WHERE session_id = ?",
+          att.sessionId,
+        );
+      }
+      ws.close(1000, "Goodbye");
+      return;
+    }
+
+    // Relay all other valid types
+    this.relayToPeer(ws, message);
+  }
+
+  async webSocketClose(
+    ws: WebSocket,
+    _code: number,
+    _reason: string,
+    _wasClean: boolean,
+  ): Promise<void> {
+    const att = this.getAttachment(ws);
+    if (att.authenticated) {
+      this.notifyPeerLeft(ws);
+    }
+  }
+
+  async webSocketError(ws: WebSocket, _error: unknown): Promise<void> {
+    const att = this.getAttachment(ws);
+    if (att.authenticated) {
+      this.notifyPeerLeft(ws);
+    }
+    try {
+      ws.close(1011, "WebSocket error");
+    } catch {
+      // Already closed
+    }
+  }
+
+  // ── Alarm ────────────────────────────────────────────────────
+
+  async alarm(): Promise<void> {
+    const now = Date.now();
+
+    // Close unauthenticated sockets past auth timeout
+    for (const ws of this.ctx.getWebSockets()) {
+      const att = this.getAttachment(ws);
+      if (
+        !att.authenticated &&
+        att.connectedAtMs > 0 &&
+        now - att.connectedAtMs >= AUTH_TIMEOUT_MS
+      ) {
+        this.sendServerMessage(ws, "error", {
+          code: "auth-timeout",
+          message: "Authentication timed out",
+        });
+        ws.close(4001, "Auth timeout");
+      }
+    }
+
+    // Check room expiry
+    const rows = this.ctx.storage.sql
+      .exec("SELECT expires_at_ms FROM room_meta LIMIT 1")
+      .toArray();
+
+    if (rows.length > 0 && now >= (rows[0].expires_at_ms as number)) {
+      // Notify and close all sockets
+      for (const ws of this.ctx.getWebSockets()) {
+        this.sendServerMessage(ws, "error", {
+          code: "room-expired",
+          message: "Room has expired",
+        });
+        ws.close(4002, "Room expired");
+      }
+      this.ctx.storage.deleteAll();
+      return;
+    }
+
+    // Reschedule for remaining deadlines
+    await this.scheduleNextAlarm();
+  }
+
+  // ── Internal Route Handlers ──────────────────────────────────
+
+  /**
+   * Accept a WebSocket upgrade. Checks that the room exists and is not expired.
+   * Starts auth timeout via alarm.
+   */
+  private async handleWebSocketUpgrade(): Promise<Response> {
+    const rows = this.ctx.storage.sql
+      .exec("SELECT expires_at_ms FROM room_meta LIMIT 1")
+      .toArray();
+
+    if (rows.length === 0) {
+      return jsonResponse({ error: "Room not found" }, 404);
+    }
+
+    if (Date.now() >= (rows[0].expires_at_ms as number)) {
+      return jsonResponse({ error: "Room expired" }, 410);
+    }
+
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
+
+    this.ctx.acceptWebSocket(server);
+    server.serializeAttachment({
+      authenticated: false,
+      sessionId: "",
+      role: "",
+      connectedAtMs: Date.now(),
+    } satisfies WsAttachment);
+
+    await this.scheduleNextAlarm();
+
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /**
+   * Handle an auth message from an unauthenticated WebSocket.
+   * Verifies secret, assigns/restores role, handles replacement.
+   */
+  private async handleAuth(
+    ws: WebSocket,
+    parsed: Record<string, unknown>,
+    att: WsAttachment,
+  ): Promise<void> {
+    // Validate required fields
+    if (typeof parsed.secret !== "string" || parsed.secret === "") {
+      this.sendServerMessage(ws, "auth-error", {
+        code: "missing-secret",
+        message: "Secret is required",
+      });
+      ws.close(4003, "Missing secret");
+      return;
+    }
+
+    if (typeof parsed.sessionId !== "string" || parsed.sessionId === "") {
+      this.sendServerMessage(ws, "auth-error", {
+        code: "missing-session-id",
+        message: "sessionId is required",
+      });
+      ws.close(4003, "Missing sessionId");
+      return;
+    }
+
+    // Fetch room metadata
+    const rows = this.ctx.storage.sql
+      .exec(
+        "SELECT room_code, secret_hash, expires_at_ms FROM room_meta LIMIT 1",
+      )
+      .toArray();
+
+    if (rows.length === 0) {
+      this.sendServerMessage(ws, "auth-error", {
+        code: "room-not-found",
+        message: "Room not found",
+      });
+      ws.close(4004, "Room not found");
+      return;
+    }
+
+    const roomCode = rows[0].room_code as string;
+    const storedHash = rows[0].secret_hash as string;
+    const expiresAtMs = rows[0].expires_at_ms as number;
+
+    if (Date.now() >= expiresAtMs) {
+      this.sendServerMessage(ws, "auth-error", {
+        code: "room-expired",
+        message: "Room has expired",
+      });
+      ws.close(4002, "Room expired");
+      return;
+    }
+
+    // Verify secret hash
+    const hashHex = await this.hashSecret(parsed.secret as string);
+    if (hashHex !== storedHash) {
+      this.sendServerMessage(ws, "auth-error", {
+        code: "invalid-secret",
+        message: "Invalid secret",
+      });
+      ws.close(4003, "Invalid secret");
+      return;
+    }
+
+    const sessionId = parsed.sessionId as string;
+
+    // Check if this sessionId is a known participant (reconnection)
+    const existingRows = this.ctx.storage.sql
+      .exec("SELECT role FROM participants WHERE session_id = ?", sessionId)
+      .toArray();
+
+    // Get currently connected authenticated peers (excluding this socket)
+    const connectedPeers = this.getAuthenticatedPeers(ws);
+
+    if (existingRows.length > 0) {
+      // Reconnection — restore stored role
+      const role = existingRows[0].role as string;
+
+      // Replace stale socket with same sessionId if still connected
+      const staleIdx = connectedPeers.findIndex(
+        (p) => p.att.sessionId === sessionId,
+      );
+      let wasReplaced = false;
+      if (staleIdx >= 0) {
+        connectedPeers[staleIdx].ws.close(4000, "Replaced by new connection");
+        connectedPeers.splice(staleIdx, 1);
+        wasReplaced = true;
+      }
+
+      this.setAuthenticated(ws, att, sessionId, role);
+      const peerPresent = connectedPeers.length > 0;
+
+      this.sendServerMessage(ws, "auth-ok", {
+        role,
+        roomCode,
+        expiresAtMs,
+        peerPresent,
+      });
+
+      if (peerPresent) {
+        this.sendServerMessage(connectedPeers[0].ws, "presence", {
+          event: wasReplaced ? "peer-replaced" : "peer-joined",
+          role,
+        });
+      }
+      return;
+    }
+
+    // New participant — check capacity
+    const participantCount = this.ctx.storage.sql
+      .exec("SELECT COUNT(*) as cnt FROM participants")
+      .toArray()[0].cnt as number;
+
+    if (participantCount >= MAX_PARTICIPANTS) {
+      this.sendServerMessage(ws, "auth-error", {
+        code: "room-full",
+        message: "Room already has two participants",
+      });
+      ws.close(4005, "Room full");
+      return;
+    }
+
+    // Assign role: first = host, second = guest
+    const role = participantCount === 0 ? "host" : "guest";
+
+    // Register in participants table
+    this.ctx.storage.sql.exec(
+      "INSERT INTO participants (session_id, role) VALUES (?, ?)",
+      sessionId,
+      role,
+    );
+
+    this.setAuthenticated(ws, att, sessionId, role);
+    const peerPresent = connectedPeers.length > 0;
+
+    this.sendServerMessage(ws, "auth-ok", {
+      role,
+      roomCode,
+      expiresAtMs,
+      peerPresent,
+    });
+
+    if (peerPresent) {
+      this.sendServerMessage(connectedPeers[0].ws, "presence", {
+        event: "peer-joined",
+        role,
+      });
+    }
+  }
+
   /**
    * Initialize the room. Stores the room code and a SHA-256 hash of the secret.
    * Returns 409 if the room is already initialized (code collision).
-   * Returns 400 if inputs are invalid.
    */
   private async handleInit(request: Request): Promise<Response> {
     let body: unknown;
@@ -88,12 +460,10 @@ export class Room extends DurableObject {
       secret: unknown;
     };
 
-    // Validate roomCode
     if (typeof roomCode !== "string" || !isValidRoomCode(roomCode)) {
       return jsonResponse({ error: "Invalid room code format" }, 400);
     }
 
-    // Validate secret
     if (typeof secret !== "string" || secret.length === 0) {
       return jsonResponse({ error: "Secret is required" }, 400);
     }
@@ -110,19 +480,10 @@ export class Room extends DurableObject {
       }
       // Room expired but alarm hasn't fired yet — clean up and allow reuse
       this.ctx.storage.sql.exec("DELETE FROM room_meta");
+      this.ctx.storage.sql.exec("DELETE FROM participants");
     }
 
-    // Hash the secret
-    const encoder = new TextEncoder();
-    const hashBuffer = await crypto.subtle.digest(
-      "SHA-256",
-      encoder.encode(secret),
-    );
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const secretHash = hashArray
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-
+    const secretHash = await this.hashSecret(secret);
     const now = Date.now();
     const expiresAtMs = now + ROOM_TTL_MS;
 
@@ -135,7 +496,6 @@ export class Room extends DurableObject {
       expiresAtMs,
     );
 
-    // Schedule alarm for room expiry
     await this.ctx.storage.setAlarm(expiresAtMs);
 
     return jsonResponse({ expiresAtMs });
@@ -170,13 +530,127 @@ export class Room extends DurableObject {
     });
   }
 
-  /**
-   * Alarm handler — clean up expired rooms.
-   */
-  async alarm(): Promise<void> {
-    this.ctx.storage.deleteAll();
+  // ── Helpers ──────────────────────────────────────────────────
+
+  private getAttachment(ws: WebSocket): WsAttachment {
+    return (ws.deserializeAttachment() ?? {
+      authenticated: false,
+      sessionId: "",
+      role: "",
+      connectedAtMs: 0,
+    }) as WsAttachment;
+  }
+
+  private setAuthenticated(
+    ws: WebSocket,
+    att: WsAttachment,
+    sessionId: string,
+    role: string,
+  ): void {
+    ws.serializeAttachment({
+      ...att,
+      authenticated: true,
+      sessionId,
+      role,
+    } satisfies WsAttachment);
+  }
+
+  private getAuthenticatedPeers(
+    excludeWs: WebSocket,
+  ): { ws: WebSocket; att: WsAttachment }[] {
+    const peers: { ws: WebSocket; att: WsAttachment }[] = [];
+    for (const ws of this.ctx.getWebSockets()) {
+      if (ws === excludeWs) continue;
+      const att = this.getAttachment(ws);
+      if (att.authenticated) {
+        peers.push({ ws, att });
+      }
+    }
+    return peers;
+  }
+
+  private relayToPeer(fromWs: WebSocket, message: string): void {
+    for (const ws of this.ctx.getWebSockets()) {
+      if (ws === fromWs) continue;
+      const att = this.getAttachment(ws);
+      if (att.authenticated) {
+        ws.send(message);
+      }
+    }
+  }
+
+  private notifyPeerLeft(closedWs: WebSocket): void {
+    const closedAtt = this.getAttachment(closedWs);
+    if (!closedAtt.authenticated) return;
+
+    for (const ws of this.ctx.getWebSockets()) {
+      if (ws === closedWs) continue;
+      const att = this.getAttachment(ws);
+      if (att.authenticated) {
+        this.sendServerMessage(ws, "presence", {
+          event: "peer-left",
+          role: closedAtt.role,
+        });
+      }
+    }
+  }
+
+  private sendServerMessage(
+    ws: WebSocket,
+    type: string,
+    fields: Record<string, unknown>,
+  ): void {
+    try {
+      ws.send(
+        JSON.stringify({
+          type,
+          protocolVersion: PROTOCOL_VERSION,
+          sessionId: "server",
+          messageId: crypto.randomUUID(),
+          tsMs: Date.now(),
+          ...fields,
+        }),
+      );
+    } catch {
+      // Socket may already be closed
+    }
+  }
+
+  private async hashSecret(secret: string): Promise<string> {
+    const hashBuffer = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(secret),
+    );
+    return Array.from(new Uint8Array(hashBuffer))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  private async scheduleNextAlarm(): Promise<void> {
+    const deadlines: number[] = [];
+
+    const rows = this.ctx.storage.sql
+      .exec("SELECT expires_at_ms FROM room_meta LIMIT 1")
+      .toArray();
+    if (rows.length > 0) {
+      deadlines.push(rows[0].expires_at_ms as number);
+    }
+
+    for (const ws of this.ctx.getWebSockets()) {
+      const att = this.getAttachment(ws);
+      if (!att.authenticated && att.connectedAtMs > 0) {
+        deadlines.push(att.connectedAtMs + AUTH_TIMEOUT_MS);
+      }
+    }
+
+    if (deadlines.length > 0) {
+      const next = Math.min(...deadlines);
+      await this.ctx.storage.setAlarm(Math.max(next, Date.now() + 100));
+    }
   }
 }
+
+// ── Module helpers ──────────────────────────────────────────────
 
 function jsonResponse(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), {

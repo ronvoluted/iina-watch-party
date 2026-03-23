@@ -210,7 +210,7 @@ describe("Room Durable Object", () => {
       expect(res.status).toBe(404);
     });
 
-    it("returns 501 for WebSocket upgrade (not yet implemented)", async () => {
+    it("returns 404 for WebSocket upgrade on uninitialized room", async () => {
       const stub = getRoomStub("QRSTUV");
       const res = await stub.fetch(
         new Request("https://do/ws", {
@@ -218,7 +218,7 @@ describe("Room Durable Object", () => {
           headers: { Upgrade: "websocket" },
         }),
       );
-      expect(res.status).toBe(501);
+      expect(res.status).toBe(404);
     });
   });
 });
