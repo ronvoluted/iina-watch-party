@@ -43,3 +43,12 @@ export {
   type ParsedInvite,
   type InviteParseResult,
 } from "./invite.js";
+
+export {
+  SyncEngine,
+  DEFAULT_SYNC_CONFIG,
+  type SyncConfig,
+  type PlayerState,
+  type SyncAction,
+  type SyncEffect,
+} from "./sync.js";
