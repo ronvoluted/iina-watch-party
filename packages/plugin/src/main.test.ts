@@ -29,6 +29,9 @@ let eventHandlers: Record<string, Array<(...args: unknown[]) => void>>;
 /** Captured core method calls. */
 let coreCalls: { method: string; args: unknown[] }[];
 
+/** Mock mpv flag store for property observers. */
+let mpvFlags: Record<string, boolean>;
+
 /** Type-safe accessor for posted message data fields. */
 function d(msg: Posted | undefined): Record<string, unknown> {
   return (msg?.data ?? {}) as Record<string, unknown>;
@@ -59,6 +62,7 @@ function setupGlobals() {
 
   eventHandlers = {};
   coreCalls = [];
+  mpvFlags = { "paused-for-cache": false };
 
   (globalThis as Record<string, unknown>).iina = {
     overlay: {
@@ -113,7 +117,7 @@ function setupGlobals() {
       },
     },
     mpv: {
-      getFlag() { return false; },
+      getFlag(name: string) { return mpvFlags[name] ?? false; },
       getNumber() { return 0; },
       getString() { return ""; },
     },
@@ -1589,6 +1593,189 @@ describe("main connection state", () => {
       const msg = JSON.parse(d(send).data as string) as Record<string, unknown>;
       expect(msg.type).toBe("auth");
       expect(msg.desiredRole).toBe("guest");
+    });
+  });
+
+  // ── Buffering behavior (FR-11) ────────────────────────────────
+
+  describe("buffering behavior", () => {
+    test("registers mpv.paused-for-cache.changed handler", () => {
+      expect(eventHandlers["mpv.paused-for-cache.changed"]).toBeDefined();
+    });
+
+    test("buffering state is included in heartbeat messages", () => {
+      doCreateRoom();
+
+      // Simulate buffering start via mpv property change
+      mpvFlags["paused-for-cache"] = true;
+      fireEvent("mpv.paused-for-cache.changed");
+
+      // Trigger heartbeat indirectly — just verify the sync engine state updated
+      // The heartbeat interval sends buffering from syncEngine.state.buffering
+      // We can verify by checking the log message
+      expect(logMessages.some((m) => m.includes("Buffering state"))).toBe(true);
+    });
+
+    test("peer-buffering warning shows in sidebar and OSD", () => {
+      doJoinRoom();
+      sidebarPosted = [];
+      osdMessages = [];
+
+      // Send a heartbeat from host with buffering: true
+      serverSend({
+        type: "heartbeat",
+        positionMs: 10000,
+        paused: false,
+        speed: 1,
+        buffering: true,
+      });
+
+      const warn = lastSidebarPosted("sb-warning");
+      expect(warn).toBeDefined();
+      expect(d(warn).text).toContain("Peer is buffering");
+      expect(osdMessages.some((m) => m.includes("Peer is buffering"))).toBe(true);
+    });
+
+    test("peer-buffering warning clears when buffering ends", () => {
+      doJoinRoom();
+
+      // Start buffering
+      serverSend({
+        type: "heartbeat",
+        positionMs: 10000,
+        paused: false,
+        speed: 1,
+        buffering: true,
+      });
+
+      sidebarPosted = [];
+
+      // Stop buffering
+      serverSend({
+        type: "heartbeat",
+        positionMs: 11000,
+        paused: false,
+        speed: 1,
+        buffering: false,
+      });
+
+      const warn = lastSidebarPosted("sb-warning");
+      expect(warn).toBeDefined();
+      expect(warn!.data).toBeNull();
+    });
+
+    test("buffering pause is not sent to peer", () => {
+      doCreateRoom();
+      overlayPosted = [];
+
+      // Set buffering state
+      mpvFlags["paused-for-cache"] = true;
+      fireEvent("mpv.paused-for-cache.changed");
+
+      // Now simulate a pause event (triggered by buffering, not user)
+      coreStatus.paused = true;
+      fireEvent("iina.pause");
+
+      // Should not have sent a pause message
+      const sends = findOverlayPosted("ws-send");
+      const pauseMsg = sends.find((s) => {
+        const parsed = JSON.parse(d(s).data as string) as Record<string, unknown>;
+        return parsed.type === "pause";
+      });
+      expect(pauseMsg).toBeUndefined();
+    });
+
+    test("buffering resume is not sent to peer", () => {
+      doCreateRoom();
+
+      // Set buffering state
+      mpvFlags["paused-for-cache"] = true;
+      fireEvent("mpv.paused-for-cache.changed");
+
+      overlayPosted = [];
+
+      // Simulate resume (triggered by buffer fill, not user)
+      coreStatus.paused = false;
+      fireEvent("iina.pause");
+
+      const sends = findOverlayPosted("ws-send");
+      const playMsg = sends.find((s) => {
+        const parsed = JSON.parse(d(s).data as string) as Record<string, unknown>;
+        return parsed.type === "play";
+      });
+      expect(playMsg).toBeUndefined();
+    });
+  });
+
+  // ── File-change auto-leave (FR-11) ─────────────────────────────
+
+  describe("file-change auto-leave", () => {
+    test("registers iina.file-loaded handler", () => {
+      expect(eventHandlers["iina.file-loaded"]).toBeDefined();
+    });
+
+    test("auto-leaves room when file changes mid-session", () => {
+      coreStatus.url = "/path/to/movie1.mp4";
+      doCreateRoom();
+
+      // Change to a different file
+      coreStatus.url = "/path/to/movie2.mp4";
+      fireEvent("iina.file-loaded");
+
+      // Should have disconnected
+      const disconnect = lastOverlayPosted("ws-disconnect");
+      expect(disconnect).toBeDefined();
+
+      // Should show OSD message
+      expect(osdMessages.some((m) => m.includes("File changed"))).toBe(true);
+
+      // Should be back in idle state
+      const state = lastSidebarPosted("sb-state");
+      expect(d(state).view).toBe("idle");
+    });
+
+    test("does not leave room when same file reloads", () => {
+      coreStatus.url = "/path/to/movie.mp4";
+      doCreateRoom();
+
+      overlayPosted = [];
+
+      // Same file reloads
+      fireEvent("iina.file-loaded");
+
+      // Should not have disconnected
+      const disconnect = findOverlayPosted("ws-disconnect");
+      expect(disconnect).toEqual([]);
+    });
+
+    test("does not leave when file loads while not in a room", () => {
+      coreStatus.url = "/path/to/movie1.mp4";
+      fireEvent("iina.file-loaded");
+
+      coreStatus.url = "/path/to/movie2.mp4";
+      fireEvent("iina.file-loaded");
+
+      // No disconnect should happen
+      const disconnect = findOverlayPosted("ws-disconnect");
+      expect(disconnect).toEqual([]);
+    });
+
+    test("session file URL is cleared on leave", () => {
+      coreStatus.url = "/path/to/movie1.mp4";
+      doCreateRoom();
+
+      // Leave
+      sidebarSend("leave-room");
+
+      // Now load a different file — should not trigger auto-leave since we already left
+      coreStatus.url = "/path/to/movie2.mp4";
+      fireEvent("iina.file-loaded");
+
+      // No extra disconnect
+      const disconnects = findOverlayPosted("ws-disconnect");
+      // One from leave-room, but the file-loaded should not trigger another
+      // After leave, state is idle so file-loaded just records the new URL
+      expect(disconnects.length).toBe(1);
     });
   });
 });

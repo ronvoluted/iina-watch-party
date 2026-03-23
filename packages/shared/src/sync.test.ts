@@ -1164,3 +1164,252 @@ describe("position tracking", () => {
     expect(engine.state.positionMs).toBe(15000);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Buffering behavior (FR-11)
+// ---------------------------------------------------------------------------
+
+describe("buffering behavior", () => {
+  test("local-buffering updates state", () => {
+    const engine = new SyncEngine("guest");
+    engine.apply({ kind: "local-buffering", buffering: true, nowMs: T });
+    expect(engine.state.buffering).toBe(true);
+
+    engine.apply({ kind: "local-buffering", buffering: false, nowMs: T + 1000 });
+    expect(engine.state.buffering).toBe(false);
+  });
+
+  test("local-play is suppressed while buffering (not sent to peer)", () => {
+    const engine = new SyncEngine("host");
+    engine.state.buffering = true;
+    const effects = engine.apply({ kind: "local-play", positionMs: 5000, nowMs: T });
+    expect(engine.state.paused).toBe(false);
+    expect(hasEffect(effects, "send-play")).toBe(false);
+  });
+
+  test("local-pause is suppressed while buffering (not sent to peer)", () => {
+    const engine = new SyncEngine("host");
+    engine.state.paused = false;
+    engine.state.buffering = true;
+    const effects = engine.apply({ kind: "local-pause", positionMs: 5000, nowMs: T });
+    expect(engine.state.paused).toBe(true);
+    expect(hasEffect(effects, "send-pause")).toBe(false);
+  });
+
+  test("local-play is sent when not buffering", () => {
+    const engine = new SyncEngine("host");
+    engine.state.buffering = false;
+    const effects = engine.apply({ kind: "local-play", positionMs: 5000, nowMs: T });
+    expect(hasEffect(effects, "send-play")).toBe(true);
+  });
+
+  test("local-pause is sent when not buffering", () => {
+    const engine = new SyncEngine("host");
+    engine.state.paused = false;
+    engine.state.buffering = false;
+    const effects = engine.apply({ kind: "local-pause", positionMs: 5000, nowMs: T });
+    expect(hasEffect(effects, "send-pause")).toBe(true);
+  });
+
+  test("drift correction is skipped while local player is buffering", () => {
+    const engine = new SyncEngine("guest", { driftThresholdMs: 2000 });
+    engine.state.paused = false;
+    engine.state.buffering = true;
+    engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
+
+    const effects = engine.apply({
+      kind: "remote-heartbeat",
+      positionMs: 20000,
+      paused: false,
+      speed: 1,
+      nowMs: T,
+    });
+    expect(hasEffect(effects, "seek")).toBe(false);
+  });
+
+  test("drift correction is skipped while remote peer is buffering", () => {
+    const engine = new SyncEngine("guest", { driftThresholdMs: 2000 });
+    engine.state.paused = false;
+    engine.state.buffering = false;
+    engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
+
+    const effects = engine.apply({
+      kind: "remote-heartbeat",
+      positionMs: 20000,
+      paused: false,
+      speed: 1,
+      buffering: true,
+      nowMs: T,
+    });
+    expect(hasEffect(effects, "seek")).toBe(false);
+  });
+
+  test("drift correction resumes after buffering ends", () => {
+    const engine = new SyncEngine("guest", { driftThresholdMs: 2000 });
+    engine.state.paused = false;
+    engine.state.buffering = true;
+    engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
+
+    // While buffering — no correction
+    engine.apply({
+      kind: "remote-heartbeat",
+      positionMs: 20000,
+      paused: false,
+      speed: 1,
+      nowMs: T,
+    });
+
+    // Buffering ends
+    engine.apply({ kind: "local-buffering", buffering: false, nowMs: T + 1000 });
+    engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T + 1000;
+
+    // Now correction should apply
+    const effects = engine.apply({
+      kind: "remote-heartbeat",
+      positionMs: 20000,
+      paused: false,
+      speed: 1,
+      nowMs: T + 1000,
+    });
+    expect(hasEffect(effects, "seek")).toBe(true);
+    expect(findEffect(effects, "seek")?.positionMs).toBe(20000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Peer-buffering warnings (FR-11)
+// ---------------------------------------------------------------------------
+
+describe("peer-buffering warnings", () => {
+  test("guest emits warn-peer-buffering when peer starts buffering", () => {
+    const engine = new SyncEngine("guest");
+    engine.state.paused = false;
+    engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
+
+    const effects = engine.apply({
+      kind: "remote-heartbeat",
+      positionMs: 10000,
+      paused: false,
+      speed: 1,
+      buffering: true,
+      nowMs: T,
+    });
+
+    const warn = effects.find((e) => e.type === "warn-peer-buffering") as
+      | Extract<SyncEffect, { type: "warn-peer-buffering" }>
+      | undefined;
+    expect(warn).toBeDefined();
+    expect(warn!.active).toBe(true);
+    expect(engine.peerBuffering).toBe(true);
+  });
+
+  test("guest emits warn-peer-buffering active=false when peer stops buffering", () => {
+    const engine = new SyncEngine("guest");
+    engine.peerBuffering = true;
+    engine.state.paused = false;
+    engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
+
+    const effects = engine.apply({
+      kind: "remote-heartbeat",
+      positionMs: 10000,
+      paused: false,
+      speed: 1,
+      buffering: false,
+      nowMs: T,
+    });
+
+    const warn = effects.find((e) => e.type === "warn-peer-buffering") as
+      | Extract<SyncEffect, { type: "warn-peer-buffering" }>
+      | undefined;
+    expect(warn).toBeDefined();
+    expect(warn!.active).toBe(false);
+    expect(engine.peerBuffering).toBe(false);
+  });
+
+  test("no warning when peer buffering state unchanged", () => {
+    const engine = new SyncEngine("guest");
+    engine.peerBuffering = false;
+    engine.state.paused = false;
+    engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
+
+    const effects = engine.apply({
+      kind: "remote-heartbeat",
+      positionMs: 10000,
+      paused: false,
+      speed: 1,
+      buffering: false,
+      nowMs: T,
+    });
+
+    expect(effects.find((e) => e.type === "warn-peer-buffering")).toBeUndefined();
+  });
+
+  test("host also tracks peer-buffering warnings", () => {
+    const engine = new SyncEngine("host");
+
+    const effects = engine.apply({
+      kind: "remote-heartbeat",
+      positionMs: 10000,
+      paused: false,
+      speed: 1,
+      buffering: true,
+      nowMs: T,
+    });
+
+    const warn = effects.find((e) => e.type === "warn-peer-buffering") as
+      | Extract<SyncEffect, { type: "warn-peer-buffering" }>
+      | undefined;
+    expect(warn).toBeDefined();
+    expect(warn!.active).toBe(true);
+  });
+
+  test("host does not perform drift correction even with peer buffering warning", () => {
+    const engine = new SyncEngine("host");
+    engine.state.paused = false;
+    engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
+
+    const effects = engine.apply({
+      kind: "remote-heartbeat",
+      positionMs: 20000,
+      paused: false,
+      speed: 1,
+      buffering: true,
+      nowMs: T,
+    });
+
+    // Host emits the warning but never seeks
+    expect(effects.find((e) => e.type === "warn-peer-buffering")).toBeDefined();
+    expect(hasEffect(effects, "seek")).toBe(false);
+  });
+
+  test("peer-buffering defaults to false when heartbeat omits buffering field", () => {
+    const engine = new SyncEngine("guest");
+    engine.peerBuffering = true;
+    engine.state.paused = false;
+    engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
+
+    const effects = engine.apply({
+      kind: "remote-heartbeat",
+      positionMs: 10000,
+      paused: false,
+      speed: 1,
+      nowMs: T,
+    });
+
+    // buffering is undefined → treated as false → transition from true to false
+    const warn = effects.find((e) => e.type === "warn-peer-buffering") as
+      | Extract<SyncEffect, { type: "warn-peer-buffering" }>
+      | undefined;
+    expect(warn).toBeDefined();
+    expect(warn!.active).toBe(false);
+  });
+});

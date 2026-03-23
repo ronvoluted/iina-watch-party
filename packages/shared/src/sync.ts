@@ -84,7 +84,8 @@ export type SyncEffect =
   | { type: "send-play"; positionMs: number }
   | { type: "send-pause"; positionMs: number }
   | { type: "send-seek"; positionMs: number; cause: "user" | "drift-correction" }
-  | { type: "send-speed"; speed: number };
+  | { type: "send-speed"; speed: number }
+  | { type: "warn-peer-buffering"; active: boolean };
 
 // ---------------------------------------------------------------------------
 // Suppression internals
@@ -110,6 +111,8 @@ export class SyncEngine {
   lastUpdateMs: number = 0;
   /** Timestamp (ms) of the last corrective seek. Used for cooldown. */
   lastCorrectionMs: number = Number.NEGATIVE_INFINITY;
+  /** Whether the remote peer is currently buffering (from heartbeats). */
+  peerBuffering: boolean = false;
 
   constructor(role: Role, config: Partial<SyncConfig> = {}) {
     this.role = role;
@@ -215,6 +218,8 @@ export class SyncEngine {
     this.state.paused = false;
     this.updatePosition(a.positionMs, a.nowMs);
     if (this.consumeSuppression("play", a.nowMs)) return [];
+    // Do not emit play to peer if resuming from buffering (not a user action)
+    if (this.state.buffering) return [];
     return [{ type: "send-play", positionMs: a.positionMs }];
   }
 
@@ -222,6 +227,8 @@ export class SyncEngine {
     this.state.paused = true;
     this.updatePosition(a.positionMs, a.nowMs);
     if (this.consumeSuppression("pause", a.nowMs)) return [];
+    // Do not emit pause to peer if caused by buffering (not a user action)
+    if (this.state.buffering) return [];
     return [{ type: "send-pause", positionMs: a.positionMs }];
   }
 
@@ -310,9 +317,17 @@ export class SyncEngine {
     seeking?: boolean;
     nowMs: number;
   }): SyncEffect[] {
-    if (this.role !== "guest") return [];
-
     const effects: SyncEffect[] = [];
+
+    // Track peer buffering state transitions (both roles)
+    const peerNowBuffering = a.buffering ?? false;
+    if (peerNowBuffering !== this.peerBuffering) {
+      this.peerBuffering = peerNowBuffering;
+      effects.push({ type: "warn-peer-buffering", active: peerNowBuffering });
+    }
+
+    // Only guest performs drift correction
+    if (this.role !== "guest") return effects;
 
     // Speed mismatch: correct speed first
     if (this.state.speed !== a.speed) {

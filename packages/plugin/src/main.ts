@@ -42,6 +42,8 @@ let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 const sessionId = `s-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 let msgSeq = 0;
 let reconnecting = false;
+/** URL of the file loaded when the room session started, for mid-session change detection. */
+let sessionFileUrl: string | null = null;
 
 const HEARTBEAT_INTERVAL_MS = 5000;
 
@@ -136,6 +138,14 @@ function executeEffects(effects: SyncEffect[]) {
       case "send-speed":
         sendProtocol({ ...makeEnvelope("speed"), speed: effect.speed });
         break;
+      case "warn-peer-buffering":
+        if (effect.active) {
+          sidebar.postMessage("sb-warning", { text: "Peer is buffering…" });
+          osd.show("Watch Party: Peer is buffering");
+        } else {
+          sidebar.postMessage("sb-warning", null);
+        }
+        break;
     }
   }
 }
@@ -188,6 +198,7 @@ function resetState() {
   room = null;
   syncEngine = null;
   reconnecting = false;
+  sessionFileUrl = null;
   stopHeartbeat();
   setSidebarView("idle");
   sidebar.postMessage("sb-status", { text: "Not connected" });
@@ -483,6 +494,7 @@ function onAuthOk(msg: Record<string, unknown>) {
   if (roomCode) room.roomCode = roomCode;
 
   initSync(role);
+  sessionFileUrl = core.status.url ?? null;
 
   log.log(`Authenticated as ${role} in room ${room.roomCode}`);
   transition("connected");
@@ -629,4 +641,36 @@ iina.event.on("iina.speed", () => {
   const nowMs = Date.now();
   const effects = syncEngine.apply({ kind: "local-speed", speed, nowMs });
   executeEffects(effects);
+});
+
+// ── Buffering detection (FR-11) ──────────────────────────────────
+
+iina.event.on("mpv.paused-for-cache.changed", () => {
+  if (!syncEngine || connState !== "connected") return;
+  const buffering = iina.mpv.getFlag("paused-for-cache");
+  const nowMs = Date.now();
+  log.log(`Buffering state: ${buffering}`);
+  const effects = syncEngine.apply({ kind: "local-buffering", buffering, nowMs });
+  executeEffects(effects);
+});
+
+// ── File-change auto-leave (FR-11) ──────────────────────────────
+
+iina.event.on("iina.file-loaded", () => {
+  if (connState === "idle" || !room) {
+    // Not in a session — just record the current file URL for future sessions
+    sessionFileUrl = core.status.url ?? null;
+    return;
+  }
+
+  const newUrl = core.status.url ?? null;
+  if (sessionFileUrl !== null && newUrl !== sessionFileUrl) {
+    log.log(`File changed mid-session: leaving room (was: ${sessionFileUrl}, now: ${newUrl})`);
+    osd.show("Watch Party: File changed — leaving room");
+    disconnect();
+    return;
+  }
+
+  // First file-loaded in the session — record it
+  sessionFileUrl = newUrl;
 });
