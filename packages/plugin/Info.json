@@ -1,10 +1,10 @@
 {
   "name": "Watch Party",
-  "identifier": "com.github.iina-watch-party",
+  "identifier": "com.ronvoluted.iina-watch-party",
   "version": "0.1.0",
-  "description": "Sync playback between two IINA users over a real-time channel",
+  "description": "Sync playback between devices over a real-time channel",
   "author": {
-    "name": "iina-watch-party contributors"
+    "name": "ronvoluted"
   },
   "entry": "src/main.js",
   "permissions": [
@@ -23,6 +23,7 @@
   },
   "allowedDomains": [
     "localhost:*",
-    "127.0.0.1:*"
+    "127.0.0.1:*",
+    "iina-watch-party.quack.workers.dev:*"
   ]
 }
