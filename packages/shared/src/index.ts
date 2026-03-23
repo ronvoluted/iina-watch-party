@@ -34,3 +34,12 @@ export type {
 export { MESSAGE_TYPES } from "./types.js";
 
 export { validateMessage, type ValidationResult } from "./validation.js";
+
+export {
+  parseInvite,
+  formatInvite,
+  validateRoomCode,
+  ROOM_CODE_ALPHABET,
+  type ParsedInvite,
+  type InviteParseResult,
+} from "./invite.js";
