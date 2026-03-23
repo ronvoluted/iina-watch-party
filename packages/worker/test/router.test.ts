@@ -88,6 +88,84 @@ describe("Worker router", () => {
     });
   });
 
+  // ── GET /api/rooms/:code ─────────────────────────────────────
+
+  describe("GET /api/rooms/:code", () => {
+    it("returns 404 for non-existent room", async () => {
+      const res = await SELF.fetch("https://example.com/api/rooms/ZYXWVU", {
+        method: "GET",
+      });
+      expect(res.status).toBe(404);
+      const body = (await res.json()) as { exists: boolean };
+      expect(body.exists).toBe(false);
+    });
+
+    it("returns 200 for existing room", async () => {
+      // Create a room first
+      const createRes = await SELF.fetch("https://example.com/api/rooms", {
+        method: "POST",
+      });
+      const { roomCode } = (await createRes.json()) as { roomCode: string };
+
+      // Check status
+      const res = await SELF.fetch(
+        `https://example.com/api/rooms/${roomCode}`,
+        { method: "GET" },
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { exists: boolean; roomCode: string };
+      expect(body.exists).toBe(true);
+      expect(body.roomCode).toBe(roomCode);
+    });
+
+    it("rejects invalid room code format", async () => {
+      const res = await SELF.fetch("https://example.com/api/rooms/bad!", {
+        method: "GET",
+      });
+      expect(res.status).toBe(404);
+    });
+
+    it("rejects POST on /api/rooms/:code with 405", async () => {
+      const res = await SELF.fetch("https://example.com/api/rooms/ABCDEF", {
+        method: "POST",
+      });
+      expect(res.status).toBe(405);
+    });
+  });
+
+  // ── Room code validation ────────────────────────────────────
+
+  describe("room code validation", () => {
+    it("rejects /ws/ with invalid room code characters", async () => {
+      const res = await SELF.fetch("https://example.com/ws/abc123", {
+        method: "GET",
+      });
+      // lowercase is not in the alphabet — should 404
+      expect(res.status).toBe(404);
+    });
+
+    it("rejects /ws/ with too-short room code", async () => {
+      const res = await SELF.fetch("https://example.com/ws/ABC", {
+        method: "GET",
+      });
+      expect(res.status).toBe(404);
+    });
+
+    it("rejects /ws/ with too-long room code", async () => {
+      const res = await SELF.fetch("https://example.com/ws/ABCDEFGH", {
+        method: "GET",
+      });
+      expect(res.status).toBe(404);
+    });
+
+    it("rejects /ws/ with ambiguous characters (0, O, 1, I, L)", async () => {
+      const res = await SELF.fetch("https://example.com/ws/A0O1IL", {
+        method: "GET",
+      });
+      expect(res.status).toBe(404);
+    });
+  });
+
   // ── 404 fallback ──────────────────────────────────────────────
 
   describe("404 fallback", () => {

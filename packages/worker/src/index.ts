@@ -99,6 +99,26 @@ async function handleCreateRoom(request: Request, env: Env): Promise<Response> {
 }
 
 /**
+ * Handle GET /api/rooms/:code — check room status.
+ */
+function handleRoomStatus(env: Env, roomCode: string): Promise<Response> {
+  const doId = env.ROOM.idFromName(roomCode);
+  const stub = env.ROOM.get(doId);
+  return stub.fetch(new Request("https://do/status", { method: "GET" }));
+}
+
+/**
+ * Extract room code from /api/rooms/:code path. Returns null if no match.
+ */
+function extractApiRoomCode(pathname: string): string | null {
+  const match = pathname.match(/^\/api\/rooms\/([^/]+)$/);
+  if (!match) return null;
+  const code = match[1];
+  if (!isValidRoomCode(code)) return null;
+  return code;
+}
+
+/**
  * Handle GET /ws/:code — WebSocket upgrade to room Durable Object.
  */
 function handleWebSocketUpgrade(
@@ -121,13 +141,26 @@ function handleWebSocketUpgrade(
 }
 
 /**
+ * Validate a room code against the expected format.
+ */
+function isValidRoomCode(code: string): boolean {
+  if (code.length !== ROOM_CODE_LENGTH) return false;
+  for (let i = 0; i < code.length; i++) {
+    if (!ROOM_CODE_ALPHABET.includes(code[i])) return false;
+  }
+  return true;
+}
+
+/**
  * Extract room code from /ws/:code path. Returns null if invalid.
  */
 function extractRoomCode(pathname: string): string | null {
   // Match /ws/ followed by exactly the code (no trailing segments)
   const match = pathname.match(/^\/ws\/([^/]+)$/);
   if (!match) return null;
-  return match[1];
+  const code = match[1];
+  if (!isValidRoomCode(code)) return null;
+  return code;
 }
 
 export default {
@@ -140,6 +173,15 @@ export default {
         return jsonResponse({ error: "Method not allowed" }, 405);
       }
       return handleCreateRoom(request, env);
+    }
+
+    // GET /api/rooms/:code — room status
+    const apiRoomCode = extractApiRoomCode(url.pathname);
+    if (apiRoomCode !== null) {
+      if (request.method !== "GET") {
+        return jsonResponse({ error: "Method not allowed" }, 405);
+      }
+      return handleRoomStatus(env, apiRoomCode);
     }
 
     // GET /ws/:code — WebSocket upgrade
