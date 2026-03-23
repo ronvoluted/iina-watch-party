@@ -210,9 +210,10 @@ export async function build(
 
 if (import.meta.main) {
   const t0 = performance.now();
+  const outDirOverride = process.env.BUILD_OUT_DIR;
   console.log("[build] Starting plugin build…");
 
-  const report = await build();
+  const report = await build(pkgRoot, outDirOverride ?? buildDir);
 
   for (const b of report.bundles) {
     const name = b.entrypoint.replace(pkgRoot + "/", "");
