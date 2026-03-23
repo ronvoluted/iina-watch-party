@@ -4,11 +4,8 @@
   "type": "module",
   "version": "0.0.0",
   "scripts": {
-    "build": "bun run build:main && bun run build:overlay && bun run build:sidebar",
-    "build:main": "bun build src/main.ts --outdir build/src --format esm",
-    "build:overlay": "cp ui/overlay/* build/ui/overlay/",
-    "build:sidebar": "cp ui/sidebar/* build/ui/sidebar/",
-    "prebuild": "bun run scripts/prepare-build.ts",
+    "build": "bun run scripts/build.ts",
+    "test": "bun test",
     "link": "iina-plugin link build",
     "pack": "iina-plugin pack build"
   },
