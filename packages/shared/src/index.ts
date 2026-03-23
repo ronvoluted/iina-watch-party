@@ -4,6 +4,33 @@
  * Protocol types, runtime validation, sync state machine, and shared utilities.
  */
 
-export const PROTOCOL_VERSION = 1;
-export const MAX_MESSAGE_SIZE_BYTES = 8192;
-export const ROOM_CODE_LENGTH = 6;
+export { PROTOCOL_VERSION, MAX_MESSAGE_SIZE_BYTES, ROOM_CODE_LENGTH } from "./constants.js";
+
+export type {
+  MessageEnvelope,
+  Role,
+  PresenceEvent,
+  SeekCause,
+  StateReason,
+  WarningCode,
+  FileMetadata,
+  AuthMessage,
+  AuthOkMessage,
+  AuthErrorMessage,
+  PresenceMessage,
+  StateMessage,
+  PlayMessage,
+  PauseMessage,
+  SeekMessage,
+  SpeedMessage,
+  HeartbeatMessage,
+  WarningMessage,
+  GoodbyeMessage,
+  ErrorMessage,
+  ProtocolMessage,
+  MessageType,
+} from "./types.js";
+
+export { MESSAGE_TYPES } from "./types.js";
+
+export { validateMessage, type ValidationResult } from "./validation.js";
