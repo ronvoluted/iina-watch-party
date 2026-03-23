@@ -65,6 +65,23 @@ function isValidRoomCode(code: string): boolean {
   return true;
 }
 
+// ── Logging ─────────────────────────────────────────────────────
+
+function roomLog(level: "info" | "warn" | "error", message: string, ctx?: Record<string, unknown>) {
+  const entry = ctx ? `${message} ${JSON.stringify(ctx)}` : message;
+  switch (level) {
+    case "info":
+      console.log(`[room] ${entry}`);
+      break;
+    case "warn":
+      console.warn(`[room] ${entry}`);
+      break;
+    case "error":
+      console.error(`[room] ${entry}`);
+      break;
+  }
+}
+
 // ── Durable Object ──────────────────────────────────────────────
 
 export class Room extends DurableObject {
@@ -115,6 +132,7 @@ export class Room extends DurableObject {
   ): Promise<void> {
     // Reject binary messages
     if (typeof message !== "string") {
+      roomLog("warn", "Rejected binary message");
       this.sendServerMessage(ws, "error", {
         code: "invalid-format",
         message: "Binary messages not supported",
@@ -124,6 +142,9 @@ export class Room extends DurableObject {
 
     // Size check
     if (new TextEncoder().encode(message).byteLength > MAX_MESSAGE_SIZE_BYTES) {
+      roomLog("warn", "Rejected oversized message", {
+        bytes: new TextEncoder().encode(message).byteLength,
+      });
       this.sendServerMessage(ws, "error", {
         code: "message-too-large",
         message: `Exceeds ${MAX_MESSAGE_SIZE_BYTES} bytes`,
@@ -144,6 +165,7 @@ export class Room extends DurableObject {
       }
       parsed = raw;
     } catch {
+      roomLog("warn", "Rejected invalid JSON");
       this.sendServerMessage(ws, "error", {
         code: "invalid-json",
         message: "Invalid JSON",
@@ -158,6 +180,7 @@ export class Room extends DurableObject {
       if (parsed.type === "auth") {
         await this.handleAuth(ws, parsed, att);
       } else {
+        roomLog("warn", "Rejected unauthenticated message", { type: parsed.type });
         this.sendServerMessage(ws, "auth-error", {
           code: "not-authenticated",
           message: "First message must be auth",
@@ -197,18 +220,23 @@ export class Room extends DurableObject {
 
   async webSocketClose(
     ws: WebSocket,
-    _code: number,
-    _reason: string,
+    code: number,
+    reason: string,
     _wasClean: boolean,
   ): Promise<void> {
     const att = this.getAttachment(ws);
+    roomLog("info", "WebSocket closed", { sessionId: att.sessionId, code, reason });
     if (att.authenticated) {
       this.notifyPeerLeft(ws);
     }
   }
 
-  async webSocketError(ws: WebSocket, _error: unknown): Promise<void> {
+  async webSocketError(ws: WebSocket, error: unknown): Promise<void> {
     const att = this.getAttachment(ws);
+    roomLog("error", "WebSocket error", {
+      sessionId: att.sessionId,
+      error: String(error),
+    });
     if (att.authenticated) {
       this.notifyPeerLeft(ws);
     }
@@ -232,6 +260,7 @@ export class Room extends DurableObject {
         att.connectedAtMs > 0 &&
         now - att.connectedAtMs >= AUTH_TIMEOUT_MS
       ) {
+        roomLog("warn", "Auth timeout", { sessionId: att.sessionId });
         this.sendServerMessage(ws, "error", {
           code: "auth-timeout",
           message: "Authentication timed out",
@@ -246,7 +275,7 @@ export class Room extends DurableObject {
       .toArray();
 
     if (rows.length > 0 && now >= (rows[0].expires_at_ms as number)) {
-      // Notify and close all sockets
+      roomLog("info", "Room expired, cleaning up");
       for (const ws of this.ctx.getWebSockets()) {
         this.sendServerMessage(ws, "error", {
           code: "room-expired",
@@ -308,6 +337,7 @@ export class Room extends DurableObject {
   ): Promise<void> {
     // Validate required fields
     if (typeof parsed.secret !== "string" || parsed.secret === "") {
+      roomLog("warn", "Auth rejected: missing secret");
       this.sendServerMessage(ws, "auth-error", {
         code: "missing-secret",
         message: "Secret is required",
@@ -317,6 +347,7 @@ export class Room extends DurableObject {
     }
 
     if (typeof parsed.sessionId !== "string" || parsed.sessionId === "") {
+      roomLog("warn", "Auth rejected: missing sessionId");
       this.sendServerMessage(ws, "auth-error", {
         code: "missing-session-id",
         message: "sessionId is required",
@@ -333,6 +364,7 @@ export class Room extends DurableObject {
       .toArray();
 
     if (rows.length === 0) {
+      roomLog("warn", "Auth rejected: room not found");
       this.sendServerMessage(ws, "auth-error", {
         code: "room-not-found",
         message: "Room not found",
@@ -346,6 +378,7 @@ export class Room extends DurableObject {
     const expiresAtMs = rows[0].expires_at_ms as number;
 
     if (Date.now() >= expiresAtMs) {
+      roomLog("warn", "Auth rejected: room expired", { roomCode });
       this.sendServerMessage(ws, "auth-error", {
         code: "room-expired",
         message: "Room has expired",
@@ -357,6 +390,7 @@ export class Room extends DurableObject {
     // Verify secret hash
     const hashHex = await this.hashSecret(parsed.secret as string);
     if (hashHex !== storedHash) {
+      roomLog("warn", "Auth rejected: invalid secret", { roomCode });
       this.sendServerMessage(ws, "auth-error", {
         code: "invalid-secret",
         message: "Invalid secret",
@@ -404,6 +438,13 @@ export class Room extends DurableObject {
       this.setAuthenticated(ws, att, sessionId, role, file);
       const peerPresent = connectedPeers.length > 0;
 
+      roomLog("info", "Auth OK (reconnect)", {
+        roomCode,
+        sessionId,
+        role,
+        replaced: wasReplaced,
+      });
+
       this.sendServerMessage(ws, "auth-ok", {
         role,
         roomCode,
@@ -427,6 +468,7 @@ export class Room extends DurableObject {
       .toArray()[0].cnt as number;
 
     if (participantCount >= MAX_PARTICIPANTS) {
+      roomLog("warn", "Auth rejected: room full", { roomCode, sessionId });
       this.sendServerMessage(ws, "auth-error", {
         code: "room-full",
         message: "Room already has two participants",
@@ -447,6 +489,8 @@ export class Room extends DurableObject {
 
     this.setAuthenticated(ws, att, sessionId, role, file);
     const peerPresent = connectedPeers.length > 0;
+
+    roomLog("info", "Auth OK (new)", { roomCode, sessionId, role });
 
     this.sendServerMessage(ws, "auth-ok", {
       role,
@@ -523,6 +567,7 @@ export class Room extends DurableObject {
 
     await this.ctx.storage.setAlarm(expiresAtMs);
 
+    roomLog("info", "Room initialized", { roomCode, expiresAtMs });
     return jsonResponse({ expiresAtMs });
   }
 

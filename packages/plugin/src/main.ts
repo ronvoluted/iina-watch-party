@@ -7,9 +7,17 @@
 
 import { parseInvite, PROTOCOL_VERSION, SyncEngine, type SyncEffect } from "@iina-watch-party/shared";
 
-const { overlay, sidebar, console: log, core, preferences, osd } = iina;
+const { overlay, sidebar, console: iinaConsole, core, preferences, osd } = iina;
 
-log.log("Watch Party plugin loaded");
+// ── Logger ──────────────────────────────────────────────────────────
+
+const logger = {
+  info: (...args: unknown[]) => iinaConsole.log("[INFO]", ...args),
+  warn: (...args: unknown[]) => iinaConsole.log("[WARN]", ...args),
+  error: (...args: unknown[]) => iinaConsole.log("[ERROR]", ...args),
+};
+
+logger.info("Watch Party plugin loaded");
 
 overlay.loadFile("ui/overlay/index.html");
 sidebar.loadFile("ui/sidebar/index.html");
@@ -79,7 +87,7 @@ function setSidebarView(view: "idle" | "connecting" | "connected" | "error") {
 }
 
 function transition(next: ConnectionState) {
-  log.log(`State: ${connState} → ${next}`);
+  logger.info(`State: ${connState} → ${next}`);
   connState = next;
 }
 
@@ -233,7 +241,7 @@ sidebar.onMessage("create-room", (_data: unknown) => {
     return;
   }
 
-  log.log("Creating room…");
+  logger.info("Creating room…");
   transition("connecting");
   setSidebarView("connecting");
   sidebar.postMessage("sb-connecting-text", { text: "Creating room…" });
@@ -255,7 +263,7 @@ overlay.onMessage("http-response", (data: unknown) => {
   } | null;
 
   if (!d || !d.ok || d.error) {
-    log.log(`Create room failed: ${d?.error ?? `HTTP ${d?.status}`}`);
+    logger.error(`Create room failed: ${d?.error ?? `HTTP ${d?.status}`}`);
     resetState();
     sidebar.postMessage("sb-error", { text: d?.error ?? "Failed to create room" });
     osd.show("Watch Party: Failed to create room");
@@ -269,7 +277,7 @@ overlay.onMessage("http-response", (data: unknown) => {
   const invite = body?.invite as string | undefined;
 
   if (!roomCode || !secret || !wsUrl) {
-    log.log("Create room: invalid server response");
+    logger.error("Create room: invalid server response");
     resetState();
     sidebar.postMessage("sb-error", { text: "Invalid server response" });
     return;
@@ -284,7 +292,7 @@ overlay.onMessage("http-response", (data: unknown) => {
     invite: invite ?? `${roomCode}:${secret}`,
   };
 
-  log.log(`Room created: ${room.roomCode}, connecting WebSocket…`);
+  logger.info(`Room created: ${room.roomCode}, connecting WebSocket…`);
   overlay.postMessage("ws-connect", { url: room.wsUrl });
 });
 
@@ -308,7 +316,7 @@ sidebar.onMessage("join-room", (data: unknown) => {
 
   const result = parseInvite(raw);
   if (!result.ok) {
-    log.log(`Invalid invite: ${result.error}`);
+    logger.warn(`Invalid invite: ${result.error}`);
     sidebar.postMessage("sb-error", { text: result.error });
     osd.show("Watch Party: Invalid invite code");
     return;
@@ -325,7 +333,7 @@ sidebar.onMessage("join-room", (data: unknown) => {
   const { roomCode, secret } = result.invite;
   const wsUrl = toWsUrl(backendUrl, roomCode);
 
-  log.log(`Joining room ${roomCode}…`);
+  logger.info(`Joining room ${roomCode}…`);
   transition("connecting");
   setSidebarView("connecting");
   sidebar.postMessage("sb-connecting-text", { text: "Joining room…" });
@@ -345,7 +353,7 @@ sidebar.onMessage("join-room", (data: unknown) => {
 // ── Sidebar: leave / copy ──────────────────────────────────────────
 
 sidebar.onMessage("leave-room", (_data: unknown) => {
-  log.log("Leaving room…");
+  logger.info("Leaving room…");
   disconnect();
 });
 
@@ -363,7 +371,7 @@ overlay.onMessage("ws-open", (_data: unknown) => {
 
   const wasReconnecting = reconnecting;
   reconnecting = false;
-  log.log(wasReconnecting ? "Reconnected, authenticating…" : "WebSocket connected, authenticating…");
+  logger.info(wasReconnecting ? "Reconnected, authenticating…" : "WebSocket connected, authenticating…");
   transition("authenticating");
   sidebar.postMessage("sb-connecting-text", { text: "Authenticating…" });
 
@@ -385,7 +393,7 @@ overlay.onMessage("ws-message", (data: unknown) => {
   try {
     msg = JSON.parse(d.data);
   } catch {
-    log.log("Received invalid JSON from server");
+    logger.warn("Received invalid JSON from server");
     return;
   }
 
@@ -394,7 +402,7 @@ overlay.onMessage("ws-message", (data: unknown) => {
 
 overlay.onMessage("ws-closed", (data: unknown) => {
   const d = data as { code?: number; reason?: string } | null;
-  log.log(`WebSocket closed: code=${d?.code} reason=${d?.reason}`);
+  logger.warn(`WebSocket closed: code=${d?.code} reason=${d?.reason}`);
 
   if (connState === "connected") {
     reconnecting = true;
@@ -410,12 +418,12 @@ overlay.onMessage("ws-closed", (data: unknown) => {
 });
 
 overlay.onMessage("ws-error", (_data: unknown) => {
-  log.log("WebSocket error");
+  logger.error("WebSocket error");
 });
 
 overlay.onMessage("ws-reconnecting", (data: unknown) => {
   const d = data as { attempt?: number; delayMs?: number } | null;
-  log.log(`Reconnecting: attempt=${d?.attempt} delay=${d?.delayMs}ms`);
+  logger.warn(`Reconnecting: attempt=${d?.attempt} delay=${d?.delayMs}ms`);
 
   reconnecting = true;
   if (connState !== "connecting") {
@@ -429,7 +437,7 @@ overlay.onMessage("ws-reconnecting", (data: unknown) => {
 
 overlay.onMessage("ws-reconnect-failed", (data: unknown) => {
   const d = data as { attempts?: number } | null;
-  log.log(`Reconnection failed after ${d?.attempts ?? "?"} attempts`);
+  logger.error(`Reconnection failed after ${d?.attempts ?? "?"} attempts`);
 
   resetState();
   setSidebarView("error");
@@ -478,7 +486,7 @@ function handleServerMessage(msg: Record<string, unknown>) {
       onRemotePlayback(msg);
       break;
     default:
-      log.log(`Unhandled message type: ${String(msg.type)}`);
+      logger.warn(`Unhandled message type: ${String(msg.type)}`);
       break;
   }
 }
@@ -496,7 +504,7 @@ function onAuthOk(msg: Record<string, unknown>) {
   initSync(role);
   sessionFileUrl = core.status.url ?? null;
 
-  log.log(`Authenticated as ${role} in room ${room.roomCode}`);
+  logger.info(`Authenticated as ${role} in room ${room.roomCode}`);
   transition("connected");
   setSidebarView("connected");
 
@@ -519,7 +527,7 @@ function onAuthOk(msg: Record<string, unknown>) {
 }
 
 function onAuthError(msg: Record<string, unknown>) {
-  log.log(`Auth error: ${String(msg.message)}`);
+  logger.error(`Auth error: ${String(msg.message)}`);
   overlay.postMessage("ws-disconnect", {});
   room = null;
   transition("idle");
@@ -530,14 +538,14 @@ function onAuthError(msg: Record<string, unknown>) {
 
 function onGoodbye(msg: Record<string, unknown>) {
   const reason = msg.reason as string | undefined;
-  log.log(`Peer goodbye: reason=${reason ?? "unknown"}`);
+  logger.info(`Peer goodbye: reason=${reason ?? "unknown"}`);
   sidebar.postMessage("sb-peer", { present: false });
   osd.show("Watch Party: Peer left the room");
 }
 
 function onPresence(msg: Record<string, unknown>) {
   const event = msg.event as string;
-  log.log(`Presence: ${event} (${String(msg.role)})`);
+  logger.info(`Presence: ${event} (${String(msg.role)})`);
 
   if (event === "peer-joined" || event === "peer-replaced") {
     sidebar.postMessage("sb-peer", { present: true, name: "Peer connected" });
@@ -553,7 +561,7 @@ function onPresence(msg: Record<string, unknown>) {
 function onWarning(msg: Record<string, unknown>) {
   const code = msg.code as string;
   const text = msg.message as string;
-  log.log(`Warning: ${code} — ${text}`);
+  logger.warn(`Warning: ${code} — ${text}`);
   sidebar.postMessage("sb-warning", { text });
 
   if (code === "file-mismatch") {
@@ -562,7 +570,7 @@ function onWarning(msg: Record<string, unknown>) {
 }
 
 function onServerError(msg: Record<string, unknown>) {
-  log.log(`Server error: ${String(msg.code)} — ${String(msg.message)}`);
+  logger.error(`Server error: ${String(msg.code)} — ${String(msg.message)}`);
   sidebar.postMessage("sb-error", {
     text: (msg.message as string) ?? "Server error",
   });
@@ -649,7 +657,7 @@ iina.event.on("mpv.paused-for-cache.changed", () => {
   if (!syncEngine || connState !== "connected") return;
   const buffering = iina.mpv.getFlag("paused-for-cache");
   const nowMs = Date.now();
-  log.log(`Buffering state: ${buffering}`);
+  logger.info(`Buffering state: ${buffering}`);
   const effects = syncEngine.apply({ kind: "local-buffering", buffering, nowMs });
   executeEffects(effects);
 });
@@ -665,7 +673,7 @@ iina.event.on("iina.file-loaded", () => {
 
   const newUrl = core.status.url ?? null;
   if (sessionFileUrl !== null && newUrl !== sessionFileUrl) {
-    log.log(`File changed mid-session: leaving room (was: ${sessionFileUrl}, now: ${newUrl})`);
+    logger.warn(`File changed mid-session: leaving room (was: ${sessionFileUrl}, now: ${newUrl})`);
     osd.show("Watch Party: File changed — leaving room");
     disconnect();
     return;

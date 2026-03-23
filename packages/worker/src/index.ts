@@ -55,6 +55,7 @@ function jsonResponse(body: Record<string, unknown>, status = 200): Response {
 async function handleCreateRoom(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
 
+  console.log("[router] Creating room");
   for (let attempt = 0; attempt < MAX_CODE_RETRIES; attempt++) {
     const roomCode = generateRoomCode();
     const secret = generateSecret();
@@ -73,11 +74,12 @@ async function handleCreateRoom(request: Request, env: Env): Promise<Response> {
     );
 
     if (initRes.status === 409) {
-      // Code collision — retry with a new code
+      console.warn(`[router] Room code collision on attempt ${attempt + 1}, retrying`);
       continue;
     }
 
     if (!initRes.ok) {
+      console.error(`[router] Room init failed: HTTP ${initRes.status}`);
       return jsonResponse({ error: "Failed to create room" }, 500);
     }
 
@@ -95,6 +97,7 @@ async function handleCreateRoom(request: Request, env: Env): Promise<Response> {
     });
   }
 
+  console.error(`[router] Failed to generate unique room code after ${MAX_CODE_RETRIES} attempts`);
   return jsonResponse({ error: "Failed to generate unique room code" }, 503);
 }
 

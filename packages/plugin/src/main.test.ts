@@ -1779,3 +1779,122 @@ describe("main connection state", () => {
     });
   });
 });
+
+// ── Log level tests ───────────────────────────────────────────────────
+
+describe("log levels", () => {
+  beforeEach(() => {
+    setupGlobals();
+    loadMain();
+  });
+
+  function hasLog(level: string, substring: string): boolean {
+    return logMessages.some((m) => m.startsWith(`[${level}]`) && m.includes(substring));
+  }
+
+  test("plugin load emits INFO", () => {
+    // loadMain() clears logMessages after require, so re-load and check before clearing
+    setupGlobals();
+    const path = require.resolve("./main.ts");
+    delete require.cache[path];
+    require(path);
+    expect(hasLog("INFO", "Watch Party plugin loaded")).toBe(true);
+  });
+
+  test("state transitions emit INFO", () => {
+    sidebarSend("create-room");
+    expect(hasLog("INFO", "idle → connecting")).toBe(true);
+  });
+
+  test("create room failure emits ERROR", () => {
+    sidebarSend("create-room");
+    logMessages = [];
+    overlaySend("http-response", { ok: false, status: 500, error: "server down" });
+    expect(hasLog("ERROR", "Create room failed")).toBe(true);
+  });
+
+  test("invalid invite emits WARN", () => {
+    sidebarSend("join-room", { invite: "bad" });
+    expect(hasLog("WARN", "Invalid invite")).toBe(true);
+  });
+
+  test("auth error emits ERROR", () => {
+    sidebarSend("create-room");
+    overlaySend("http-response", {
+      ok: true,
+      status: 200,
+      body: {
+        roomCode: "ABC123",
+        secret: "testsecret",
+        wsUrl: "wss://example.com/ws/ABC123",
+        invite: "ABC123:testsecret",
+      },
+    });
+    overlaySend("ws-open");
+    logMessages = [];
+    overlaySend("ws-message", {
+      data: JSON.stringify({ type: "auth-error", code: "invalid-secret", message: "bad secret" }),
+    });
+    expect(hasLog("ERROR", "Auth error")).toBe(true);
+  });
+
+  test("server error emits ERROR", () => {
+    doCreateRoom();
+    logMessages = [];
+    overlaySend("ws-message", {
+      data: JSON.stringify({ type: "error", code: "room-expired", message: "Room has expired" }),
+    });
+    expect(hasLog("ERROR", "Server error")).toBe(true);
+  });
+
+  test("warning message emits WARN", () => {
+    doCreateRoom();
+    logMessages = [];
+    overlaySend("ws-message", {
+      data: JSON.stringify({ type: "warning", code: "file-mismatch", message: "Files differ" }),
+    });
+    expect(hasLog("WARN", "file-mismatch")).toBe(true);
+  });
+
+  test("WebSocket close emits WARN", () => {
+    doCreateRoom();
+    logMessages = [];
+    overlaySend("ws-closed", { code: 1006, reason: "abnormal" });
+    expect(hasLog("WARN", "WebSocket closed")).toBe(true);
+  });
+
+  test("WebSocket error emits ERROR", () => {
+    doCreateRoom();
+    logMessages = [];
+    overlaySend("ws-error");
+    expect(hasLog("ERROR", "WebSocket error")).toBe(true);
+  });
+
+  test("reconnecting emits WARN", () => {
+    doCreateRoom();
+    logMessages = [];
+    overlaySend("ws-reconnecting", { attempt: 2, delayMs: 1000 });
+    expect(hasLog("WARN", "Reconnecting")).toBe(true);
+  });
+
+  test("reconnection failed emits ERROR", () => {
+    doCreateRoom();
+    logMessages = [];
+    overlaySend("ws-reconnect-failed", { attempts: 5 });
+    expect(hasLog("ERROR", "Reconnection failed")).toBe(true);
+  });
+
+  test("unhandled message type emits WARN", () => {
+    doCreateRoom();
+    logMessages = [];
+    overlaySend("ws-message", {
+      data: JSON.stringify({ type: "unknown-type" }),
+    });
+    expect(hasLog("WARN", "Unhandled message type")).toBe(true);
+  });
+
+  test("successful auth emits INFO", () => {
+    doCreateRoom();
+    expect(hasLog("INFO", "Authenticated as host")).toBe(true);
+  });
+});
