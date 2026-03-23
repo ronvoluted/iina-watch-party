@@ -22,35 +22,35 @@
 
 // ── DOM references ──────────────────────────────────────────────────
 
-var views = {
+const views = {
   idle: document.getElementById("view-idle"),
   connecting: document.getElementById("view-connecting"),
   connected: document.getElementById("view-connected"),
   error: document.getElementById("view-error"),
 };
 
-var idleStatus = document.getElementById("idle-status");
-var inviteInput = document.getElementById("invite-input");
-var connectingText = document.getElementById("connecting-text");
-var connectedStatus = document.getElementById("connected-status");
-var roomCode = document.getElementById("room-code");
-var inviteSection = document.getElementById("invite-section");
-var peerDot = document.getElementById("peer-dot");
-var peerName = document.getElementById("peer-name");
-var warningSection = document.getElementById("warning-section");
-var warningText = document.getElementById("warning-text");
-var errorText = document.getElementById("error-text");
+const idleStatus = document.getElementById("idle-status");
+const inviteInput = document.getElementById("invite-input");
+const connectingText = document.getElementById("connecting-text");
+const connectedStatus = document.getElementById("connected-status");
+const roomCode = document.getElementById("room-code");
+const inviteSection = document.getElementById("invite-section");
+const peerDot = document.getElementById("peer-dot");
+const peerName = document.getElementById("peer-name");
+const warningSection = document.getElementById("warning-section");
+const warningText = document.getElementById("warning-text");
+const errorText = document.getElementById("error-text");
 
 // ── State ───────────────────────────────────────────────────────────
 
-var currentView = "idle";
+let currentView = "idle";
 
 // ── View switching ──────────────────────────────────────────────────
 
 function showView(name) {
   if (!views[name]) return;
   currentView = name;
-  for (var key in views) {
+  for (const key in views) {
     if (views[key]) {
       views[key].classList.toggle("hidden", key !== name);
     }
@@ -64,7 +64,7 @@ document.getElementById("btn-create").addEventListener("click", function () {
 });
 
 document.getElementById("btn-join").addEventListener("click", function () {
-  var invite = inviteInput.value.trim().toUpperCase();
+  const invite = inviteInput.value.trim().toUpperCase();
   if (!invite) return;
   inviteInput.value = invite;
   iina.postMessage("join-room", { invite: invite });
@@ -72,7 +72,7 @@ document.getElementById("btn-join").addEventListener("click", function () {
 
 inviteInput.addEventListener("keydown", function (e) {
   if (e.key === "Enter") {
-    var invite = inviteInput.value.trim().toUpperCase();
+    const invite = inviteInput.value.trim().toUpperCase();
     if (!invite) return;
     inviteInput.value = invite;
     iina.postMessage("join-room", { invite: invite });
@@ -81,9 +81,9 @@ inviteInput.addEventListener("keydown", function (e) {
 
 // Filter out non-alphanumeric characters from room code input
 inviteInput.addEventListener("input", function () {
-  var pos = inviteInput.selectionStart;
-  var before = inviteInput.value;
-  var filtered = before.replace(/[^A-Za-z0-9]/g, "");
+  const pos = inviteInput.selectionStart;
+  const before = inviteInput.value;
+  const filtered = before.replace(/[^A-Za-z0-9]/g, "");
   if (filtered !== before) {
     inviteInput.value = filtered;
     inviteInput.selectionStart = inviteInput.selectionEnd = pos - (before.length - filtered.length);
@@ -100,7 +100,7 @@ document.getElementById("btn-copy-invite").addEventListener("click", function ()
 
 document.getElementById("btn-leave").addEventListener("click", function () {
   // Pre-fill the room code input so the user can quickly rejoin
-  var code = roomCode.textContent;
+  const code = roomCode.textContent;
   if (code) inviteInput.value = code;
   iina.postMessage("leave-room", {});
 });
@@ -124,7 +124,7 @@ iina.onMessage("sb-room", function (data) {
 
 iina.onMessage("sb-peer", function (data) {
   if (!data) return;
-  var present = !!data.present;
+  const present = !!data.present;
   peerDot.classList.toggle("offline", !present);
   peerName.textContent = present ? (data.name || "Peer connected") : "Waiting for peer\u2026";
 });
@@ -177,20 +177,20 @@ iina.onMessage("sb-copy-text", function (data) {
 // message channel, so the transport bridge lives here.
 
 /** @type {WebSocket | null} */
-var socket = null;
+let socket = null;
 /** @type {string | null} */
-var wsConnectUrl = null;
+let wsConnectUrl = null;
 /** @type {string[] | null} */
-var wsConnectProtocols = null;
-var wsIntentionalClose = false;
-var wsReconnectAttempt = 0;
-var wsReconnectTimer = null;
-var WS_MAX_RECONNECT_DELAY = 30000;
-var WS_BASE_DELAY = 1000;
-var WS_MAX_ATTEMPTS = 10;
+let wsConnectProtocols = null;
+let wsIntentionalClose = false;
+let wsReconnectAttempt = 0;
+let wsReconnectTimer = null;
+const WS_MAX_RECONNECT_DELAY = 30000;
+const WS_BASE_DELAY = 1000;
+const WS_MAX_ATTEMPTS = 10;
 
 function wsReconnectDelay(attempt) {
-  var exp = Math.min(WS_BASE_DELAY * Math.pow(2, attempt), WS_MAX_RECONNECT_DELAY);
+  const exp = Math.min(WS_BASE_DELAY * Math.pow(2, attempt), WS_MAX_RECONNECT_DELAY);
   return Math.round(exp * (0.75 + Math.random() * 0.5));
 }
 
@@ -224,8 +224,8 @@ function wsOpenSocket(url, protocols) {
     socket = null;
     iina.postMessage("ws-closed", { code: event.code, reason: event.reason });
     // Don't reconnect on intentional close or server-rejected codes (auth/room errors).
-    var code = event.code;
-    var serverRejected = code >= 4001 && code <= 4005;
+    const code = event.code;
+    const serverRejected = code >= 4001 && code <= 4005;
     if (!wsIntentionalClose && !serverRejected && wsConnectUrl) { wsScheduleReconnect(); }
   };
 }
@@ -236,7 +236,7 @@ function wsScheduleReconnect() {
     wsConnectUrl = null; wsConnectProtocols = null; wsReconnectAttempt = 0;
     return;
   }
-  var delay = wsReconnectDelay(wsReconnectAttempt);
+  const delay = wsReconnectDelay(wsReconnectAttempt);
   wsReconnectAttempt++;
   iina.postMessage("ws-reconnecting", { attempt: wsReconnectAttempt, delayMs: delay });
   wsReconnectTimer = setTimeout(function () {
@@ -268,7 +268,7 @@ iina.onMessage("sb-fetch", function (data) {
     iina.postMessage("sb-fetch-response", { ok: false, error: "sb-fetch requires a url" });
     return;
   }
-  var opts = { method: data.method || "GET" };
+  const opts = { method: data.method || "GET" };
   if (data.headers) opts.headers = data.headers;
   if (data.body) opts.body = typeof data.body === "string" ? data.body : JSON.stringify(data.body);
 

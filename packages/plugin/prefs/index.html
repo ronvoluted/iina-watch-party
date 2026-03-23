@@ -46,14 +46,14 @@
   // iina.preferences.get(key, callback) on load and iina.preferences.set(key, value)
   // on change events. The script below is for validation hints only.
 
-  var fields = ["backendUrl", "displayName", "driftThresholdMs"];
+  const fields = ["backendUrl", "displayName", "driftThresholdMs"];
 
   function validate(key, value) {
-    var hint = document.getElementById(key + "-hint");
-    var input = document.getElementById(key);
+    const hint = document.getElementById(key + "-hint");
+    const input = document.getElementById(key);
     if (key === "backendUrl" && value) {
       try {
-        var url = new URL(value);
+        const url = new URL(value);
         if (url.protocol !== "https:" && url.protocol !== "http:") {
           hint.textContent = "URL must use https:// or http://";
           hint.classList.add("error");
@@ -68,7 +68,7 @@
       }
     }
     if (key === "driftThresholdMs") {
-      var n = Number(value);
+      const n = Number(value);
       if (isNaN(n) || n < 500 || n > 10000) {
         hint.textContent = "Must be between 500 and 10000 ms.";
         hint.classList.add("error");
@@ -86,13 +86,13 @@
   }
 
   fields.forEach(function (key) {
-    var el = document.getElementById(key);
+    const el = document.getElementById(key);
     el.addEventListener("input", function () {
       validate(key, el.value);
       // IINA auto-wiring saves on "change" (blur), but switching to another
       // settings tab can unload the page before blur fires.  Eagerly persist
       // on every keystroke so values are never lost.
-      var val = el.dataset.type === "int" ? parseInt(el.value, 10) : el.value;
+      const val = el.dataset.type === "int" ? parseInt(el.value, 10) : el.value;
       if (typeof iina !== "undefined" && iina.preferences) {
         iina.preferences.set(key, val);
       }

@@ -101,13 +101,13 @@ function openSocket(url, protocols) {
   };
 
   socket.onclose = function (event) {
-    var code = event.code;
-    var reason = event.reason;
+    const code = event.code;
+    const reason = event.reason;
     socket = null;
     iina.postMessage("ws-closed", { code: code, reason: reason });
 
     // Don't reconnect on server-rejected codes (auth/room errors).
-    var serverRejected = code >= 4001 && code <= 4005;
+    const serverRejected = code >= 4001 && code <= 4005;
     if (!intentionalClose && !serverRejected && connectUrl) {
       scheduleReconnect();
     }
@@ -123,7 +123,7 @@ function scheduleReconnect() {
     reconnectAttempt = 0;
     return;
   }
-  var delay = reconnectDelay(reconnectAttempt);
+  const delay = reconnectDelay(reconnectAttempt);
   reconnectAttempt++;
   iina.postMessage("ws-reconnecting", { attempt: reconnectAttempt, delayMs: delay });
   reconnectTimer = setTimeout(function () {
@@ -183,7 +183,7 @@ iina.onMessage("http-fetch", function (data) {
     return;
   }
 
-  var opts = { method: data.method || "GET" };
+  const opts = { method: data.method || "GET" };
   if (data.headers) opts.headers = data.headers;
   if (data.body) opts.body = typeof data.body === "string" ? data.body : JSON.stringify(data.body);
 
