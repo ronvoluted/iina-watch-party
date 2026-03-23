@@ -199,10 +199,17 @@ sidebar.onMessage("join-room", (data: unknown) => {
     return;
   }
 
+  if (!isFileLoaded()) {
+    sidebar.postMessage("sb-error", { text: "Please open a video file first." });
+    osd.show("Watch Party: Open a file before joining a room");
+    return;
+  }
+
   const result = parseInvite(raw);
   if (!result.ok) {
     log.log(`Invalid invite: ${result.error}`);
     sidebar.postMessage("sb-error", { text: result.error });
+    osd.show("Watch Party: Invalid invite code");
     return;
   }
 

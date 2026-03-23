@@ -462,6 +462,23 @@ describe("main connection state", () => {
       expect(d(peer).present).toBe(true);
     });
 
+    test("shows error when no file is loaded", () => {
+      coreStatus.idle = true;
+      sidebarSend("join-room", { invite: "ABCDEF:dGVzdHNlY3JldA" });
+
+      const err = lastSidebarPosted("sb-error");
+      expect(err).toBeDefined();
+      expect(d(err).text).toContain("video file");
+      expect(findOverlayPosted("ws-connect")).toEqual([]);
+    });
+
+    test("shows OSD when no file is loaded", () => {
+      coreStatus.idle = true;
+      sidebarSend("join-room", { invite: "ABCDEF:dGVzdHNlY3JldA" });
+
+      expect(osdMessages.some((m) => m.includes("file"))).toBe(true);
+    });
+
     test("shows error on empty invite", () => {
       sidebarSend("join-room", { invite: "" });
 
@@ -482,6 +499,12 @@ describe("main connection state", () => {
 
       const err = lastSidebarPosted("sb-error");
       expect(err).toBeDefined();
+    });
+
+    test("shows OSD on invalid invite", () => {
+      sidebarSend("join-room", { invite: "nocolon" });
+
+      expect(osdMessages.some((m) => m.includes("Invalid invite"))).toBe(true);
     });
 
     test("guest does not show invite in sb-room", () => {
