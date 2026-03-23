@@ -5,6 +5,7 @@
  */
 
 export { Room } from "./room.js";
+import { IpRateLimiter } from "./rate-limit.js";
 
 /**
  * Room code constants — mirrored from @iina-watch-party/shared to avoid
@@ -15,6 +16,20 @@ const ROOM_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
 /** Maximum retries for room code collision. */
 const MAX_CODE_RETRIES = 5;
+
+/** Rate limit: max 10 room creations per IP per 60-second window. */
+const ROOM_CREATE_RATE_LIMIT_WINDOW_MS = 60_000;
+const ROOM_CREATE_RATE_LIMIT_MAX = 10;
+
+/** Exported for test access (reset between tests). */
+export const roomCreateLimiter = new IpRateLimiter(
+  ROOM_CREATE_RATE_LIMIT_WINDOW_MS,
+  ROOM_CREATE_RATE_LIMIT_MAX,
+);
+
+/** Prune stale entries every N requests. */
+let requestCount = 0;
+const PRUNE_INTERVAL = 100;
 
 export interface Env {
   ROOM: DurableObjectNamespace;
@@ -54,6 +69,12 @@ function jsonResponse(body: Record<string, unknown>, status = 200): Response {
  */
 async function handleCreateRoom(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
+  const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+
+  if (!roomCreateLimiter.check(ip)) {
+    console.warn("[router] Rate limited room creation", { ip });
+    return jsonResponse({ error: "Too many requests" }, 429);
+  }
 
   console.log("[router] Creating room");
   for (let attempt = 0; attempt < MAX_CODE_RETRIES; attempt++) {
@@ -169,6 +190,12 @@ function extractRoomCode(pathname: string): string | null {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+
+    // Periodically prune expired rate-limit entries
+    requestCount++;
+    if (requestCount % PRUNE_INTERVAL === 0) {
+      roomCreateLimiter.prune();
+    }
 
     // POST /api/rooms — create room
     if (url.pathname === "/api/rooms") {

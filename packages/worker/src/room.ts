@@ -7,6 +7,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./index.js";
+import { ConnectionRateLimiter } from "./rate-limit.js";
 
 // ── Constants ───────────────────────────────────────────────────
 
@@ -26,6 +27,12 @@ const MAX_PARTICIPANTS = 2;
 
 /** Duration tolerance for file mismatch detection (5 seconds). */
 const FILE_DURATION_TOLERANCE_MS = 5000;
+
+/** Max burst of WebSocket messages before throttling. */
+const WS_RATE_LIMIT_BURST = 20;
+
+/** Sustained message rate (messages per second). */
+const WS_RATE_LIMIT_REFILL = 10;
 
 /** Message types that get relayed to the peer as-is. */
 const RELAY_TYPES: ReadonlySet<string> = new Set([
@@ -85,6 +92,8 @@ function roomLog(level: "info" | "warn" | "error", message: string, ctx?: Record
 // ── Durable Object ──────────────────────────────────────────────
 
 export class Room extends DurableObject {
+  private wsRateLimiters = new Map<WebSocket, ConnectionRateLimiter>();
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.ctx.storage.sql.exec(
@@ -173,6 +182,21 @@ export class Room extends DurableObject {
       return;
     }
 
+    // Per-connection rate limiting
+    let limiter = this.wsRateLimiters.get(ws);
+    if (!limiter) {
+      limiter = new ConnectionRateLimiter(WS_RATE_LIMIT_BURST, WS_RATE_LIMIT_REFILL);
+      this.wsRateLimiters.set(ws, limiter);
+    }
+    if (!limiter.consume()) {
+      roomLog("warn", "Rate limited WebSocket message");
+      this.sendServerMessage(ws, "error", {
+        code: "rate-limited",
+        message: "Too many messages",
+      });
+      return;
+    }
+
     const att = this.getAttachment(ws);
 
     // Unauthenticated — must send auth first
@@ -224,6 +248,7 @@ export class Room extends DurableObject {
     reason: string,
     _wasClean: boolean,
   ): Promise<void> {
+    this.wsRateLimiters.delete(ws);
     const att = this.getAttachment(ws);
     roomLog("info", "WebSocket closed", { sessionId: att.sessionId, code, reason });
     if (att.authenticated) {
@@ -232,6 +257,7 @@ export class Room extends DurableObject {
   }
 
   async webSocketError(ws: WebSocket, error: unknown): Promise<void> {
+    this.wsRateLimiters.delete(ws);
     const att = this.getAttachment(ws);
     roomLog("error", "WebSocket error", {
       sessionId: att.sessionId,

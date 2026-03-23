@@ -1,7 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { SELF } from "cloudflare:test";
+import { roomCreateLimiter } from "../src/index.js";
 
 describe("Worker router", () => {
+  beforeEach(() => {
+    roomCreateLimiter.reset();
+  });
   // ── POST /api/rooms ──────────────────────────────────────────
 
   describe("POST /api/rooms", () => {

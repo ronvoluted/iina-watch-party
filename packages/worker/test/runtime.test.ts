@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { SELF, env } from "cloudflare:test";
+import { roomCreateLimiter } from "../src/index.js";
 import type { Env } from "../src/index.js";
 
 const typedEnv = env as Env;
@@ -105,6 +106,10 @@ async function initRoom(
 // ── Tests ────────────────────────────────────────────────────────
 
 describe("Worker runtime", () => {
+  beforeEach(() => {
+    roomCreateLimiter.reset();
+  });
+
   // ── Binary message rejection ────────────────────────────────
 
   describe("binary messages", () => {
