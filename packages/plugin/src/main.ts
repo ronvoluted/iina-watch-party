@@ -41,6 +41,7 @@ let syncEngine: SyncEngine | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 const sessionId = `s-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 let msgSeq = 0;
+let reconnecting = false;
 
 const HEARTBEAT_INTERVAL_MS = 5000;
 
@@ -179,6 +180,7 @@ function resetState() {
   transition("idle");
   room = null;
   syncEngine = null;
+  reconnecting = false;
   stopHeartbeat();
   setSidebarView("idle");
   sidebar.postMessage("sb-status", { text: "Not connected" });
@@ -341,7 +343,9 @@ sidebar.onMessage("copy-invite", (_data: unknown) => {
 overlay.onMessage("ws-open", (_data: unknown) => {
   if (!room) return;
 
-  log.log("WebSocket connected, authenticating…");
+  const wasReconnecting = reconnecting;
+  reconnecting = false;
+  log.log(wasReconnecting ? "Reconnected, authenticating…" : "WebSocket connected, authenticating…");
   transition("authenticating");
   sidebar.postMessage("sb-connecting-text", { text: "Authenticating…" });
 
@@ -374,11 +378,16 @@ overlay.onMessage("ws-closed", (data: unknown) => {
   const d = data as { code?: number; reason?: string } | null;
   log.log(`WebSocket closed: code=${d?.code} reason=${d?.reason}`);
 
-  if (connState === "connecting" || connState === "authenticating") {
-    resetState();
-    sidebar.postMessage("sb-error", { text: "Connection failed" });
-  } else if (connState === "connected") {
+  if (connState === "connected") {
+    reconnecting = true;
+    stopHeartbeat();
     sidebar.postMessage("sb-status", { text: "Connection lost" });
+  } else if (connState === "connecting" || connState === "authenticating") {
+    if (!reconnecting) {
+      resetState();
+      sidebar.postMessage("sb-error", { text: "Connection failed" });
+    }
+    // When reconnecting, let the overlay retry — don't reset state
   }
 });
 
@@ -390,13 +399,24 @@ overlay.onMessage("ws-reconnecting", (data: unknown) => {
   const d = data as { attempt?: number; delayMs?: number } | null;
   log.log(`Reconnecting: attempt=${d?.attempt} delay=${d?.delayMs}ms`);
 
-  if (connState === "connected") {
+  reconnecting = true;
+  if (connState !== "connecting") {
     transition("connecting");
     setSidebarView("connecting");
   }
   sidebar.postMessage("sb-connecting-text", {
     text: `Reconnecting (attempt ${d?.attempt ?? "?"})…`,
   });
+});
+
+overlay.onMessage("ws-reconnect-failed", (data: unknown) => {
+  const d = data as { attempts?: number } | null;
+  log.log(`Reconnection failed after ${d?.attempts ?? "?"} attempts`);
+
+  resetState();
+  setSidebarView("error");
+  sidebar.postMessage("sb-error", { text: "Connection lost. Please rejoin the room." });
+  osd.show("Watch Party: Connection lost");
 });
 
 // ── Protocol message dispatch ──────────────────────────────────────

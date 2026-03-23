@@ -36,6 +36,9 @@ const MAX_RECONNECT_DELAY_MS = 30000;
 /** Base delay for exponential backoff in ms. */
 const BASE_DELAY_MS = 1000;
 
+/** Maximum number of reconnect attempts before giving up. */
+const MAX_RECONNECT_ATTEMPTS = 10;
+
 /**
  * Compute delay with exponential backoff and jitter.
  * @param {number} attempt
@@ -111,6 +114,13 @@ function openSocket(url, protocols) {
 
 /** Schedule a reconnection attempt with exponential backoff. */
 function scheduleReconnect() {
+  if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
+    iina.postMessage("ws-reconnect-failed", { attempts: reconnectAttempt });
+    connectUrl = null;
+    connectProtocols = null;
+    reconnectAttempt = 0;
+    return;
+  }
   var delay = reconnectDelay(reconnectAttempt);
   reconnectAttempt++;
   iina.postMessage("ws-reconnecting", { attempt: reconnectAttempt, delayMs: delay });

@@ -1406,4 +1406,189 @@ describe("main connection state", () => {
       expect(msg!.tsMs).toBeGreaterThan(0);
     });
   });
+
+  describe("reconnection", () => {
+    test("does not reset state when connection drops while connected", () => {
+      doCreateRoom();
+      sidebarPosted = [];
+
+      overlaySend("ws-closed", { code: 1006, reason: "" });
+
+      const status = lastSidebarPosted("sb-status");
+      expect(status).toBeDefined();
+      expect(d(status).text).toBe("Connection lost");
+
+      // Should NOT transition to idle — room context must be preserved
+      const state = findSidebarPosted("sb-state");
+      expect(state.every((m) => d(m).view !== "idle")).toBe(true);
+    });
+
+    test("transitions to connecting view on ws-reconnecting", () => {
+      doCreateRoom();
+      sidebarPosted = [];
+
+      overlaySend("ws-closed", { code: 1006, reason: "" });
+      overlaySend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
+
+      const state = lastSidebarPosted("sb-state");
+      expect(d(state).view).toBe("connecting");
+
+      const text = lastSidebarPosted("sb-connecting-text");
+      expect(d(text).text).toContain("Reconnecting");
+      expect(d(text).text).toContain("1");
+    });
+
+    test("does not reset state on ws-closed during reconnection attempts", () => {
+      doCreateRoom();
+
+      // Connection drops
+      overlaySend("ws-closed", { code: 1006, reason: "" });
+      overlaySend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
+
+      sidebarPosted = [];
+
+      // Reconnect attempt fails (socket closes during connecting)
+      overlaySend("ws-closed", { code: 1006, reason: "" });
+
+      // Should NOT show "Connection failed" or reset to idle
+      const errors = findSidebarPosted("sb-error");
+      expect(errors).toEqual([]);
+
+      const state = findSidebarPosted("sb-state");
+      expect(state.every((m) => d(m).view !== "idle")).toBe(true);
+    });
+
+    test("re-authenticates on successful reconnection", () => {
+      doCreateRoom();
+      overlayPosted = [];
+
+      // Connection drops and overlay reconnects
+      overlaySend("ws-closed", { code: 1006, reason: "" });
+      overlaySend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
+      overlaySend("ws-open");
+
+      // Should send a new auth message
+      const send = lastOverlayPosted("ws-send");
+      expect(send).toBeDefined();
+      const msg = JSON.parse(d(send).data as string) as Record<string, unknown>;
+      expect(msg.type).toBe("auth");
+      expect(msg.secret).toBe("testsecret");
+    });
+
+    test("resumes connected state after successful reconnect + auth-ok", () => {
+      doCreateRoom();
+
+      // Connection drops and overlay reconnects
+      overlaySend("ws-closed", { code: 1006, reason: "" });
+      overlaySend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
+      overlaySend("ws-open");
+
+      sidebarPosted = [];
+
+      serverSend({
+        type: "auth-ok",
+        role: "host",
+        roomCode: "ABC123",
+        peerPresent: false,
+        expiresAtMs: Date.now() + 3600000,
+      });
+
+      const state = lastSidebarPosted("sb-state");
+      expect(d(state).view).toBe("connected");
+
+      const status = lastSidebarPosted("sb-status");
+      expect(d(status).text).toBe("Connected");
+    });
+
+    test("host sends state snapshot with reason reconnect after reconnecting with peer", () => {
+      doCreateRoom();
+      overlayPosted = [];
+
+      // Connection drops and overlay reconnects
+      overlaySend("ws-closed", { code: 1006, reason: "" });
+      overlaySend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
+      overlaySend("ws-open");
+
+      // Clear the auth message
+      overlayPosted = [];
+
+      serverSend({
+        type: "auth-ok",
+        role: "host",
+        roomCode: "ABC123",
+        peerPresent: true,
+        expiresAtMs: Date.now() + 3600000,
+      });
+
+      const send = lastOverlayPosted("ws-send");
+      expect(send).toBeDefined();
+      const msg = JSON.parse(d(send).data as string) as Record<string, unknown>;
+      expect(msg.type).toBe("state");
+      expect(msg.reason).toBe("reconnect");
+    });
+
+    test("resets state on ws-reconnect-failed", () => {
+      doCreateRoom();
+      sidebarPosted = [];
+      osdMessages = [];
+
+      overlaySend("ws-closed", { code: 1006, reason: "" });
+      overlaySend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
+      overlaySend("ws-reconnect-failed", { attempts: 10 });
+
+      const state = lastSidebarPosted("sb-state");
+      expect(d(state).view).toBe("error");
+
+      const err = lastSidebarPosted("sb-error");
+      expect(err).toBeDefined();
+      expect(d(err).text).toContain("rejoin");
+
+      expect(osdMessages.some((m) => m.includes("Connection lost"))).toBe(true);
+    });
+
+    test("can create a new room after reconnect failure", () => {
+      doCreateRoom();
+
+      overlaySend("ws-closed", { code: 1006, reason: "" });
+      overlaySend("ws-reconnect-failed", { attempts: 10 });
+
+      // Should be back to idle, able to create again
+      overlayPosted = [];
+      sidebarSend("create-room");
+
+      const fetch = lastOverlayPosted("http-fetch");
+      expect(fetch).toBeDefined();
+    });
+
+    test("initial connection failure still resets state when not reconnecting", () => {
+      sidebarSend("join-room", { invite: "ABCDEF:dGVzdHNlY3JldA" });
+
+      overlaySend("ws-closed", { code: 1006, reason: "" });
+
+      const err = lastSidebarPosted("sb-error");
+      expect(err).toBeDefined();
+      expect(d(err).text).toContain("Connection failed");
+
+      const state = lastSidebarPosted("sb-state");
+      expect(d(state).view).toBe("idle");
+    });
+
+    test("registers ws-reconnect-failed handler", () => {
+      expect(overlayHandlers["ws-reconnect-failed"]).toBeDefined();
+    });
+
+    test("guest reconnection re-authenticates with guest role", () => {
+      doJoinRoom();
+      overlayPosted = [];
+
+      overlaySend("ws-closed", { code: 1006, reason: "" });
+      overlaySend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
+      overlaySend("ws-open");
+
+      const send = lastOverlayPosted("ws-send");
+      const msg = JSON.parse(d(send).data as string) as Record<string, unknown>;
+      expect(msg.type).toBe("auth");
+      expect(msg.desiredRole).toBe("guest");
+    });
+  });
 });

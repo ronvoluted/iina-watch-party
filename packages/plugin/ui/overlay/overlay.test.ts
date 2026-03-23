@@ -371,6 +371,63 @@ describe("overlay bridge", () => {
       jest.useRealTimers();
     });
 
+    test("gives up after max reconnect attempts and posts ws-reconnect-failed", () => {
+      jest.useFakeTimers();
+
+      send("ws-connect", { url: "wss://example.com/ws/ABC123" });
+      lastSocket!.simulateOpen();
+
+      // Exhaust all 10 reconnect attempts
+      for (let i = 0; i < 10; i++) {
+        lastSocket!.simulateClose(1006, "");
+        const reconnecting = findPosted("ws-reconnecting");
+        const delay = (reconnecting[reconnecting.length - 1]!.data as any).delayMs;
+        jest.advanceTimersByTime(delay + 100);
+        // Each attempt opens a new socket that immediately fails (no simulateOpen)
+        if (i < 9) {
+          // Socket fails without connecting — onclose fires
+          lastSocket!.simulateClose(1006, "");
+        }
+      }
+
+      // After the 10th close, scheduleReconnect should post ws-reconnect-failed
+      lastSocket!.simulateClose(1006, "");
+
+      const failed = findPosted("ws-reconnect-failed");
+      expect(failed.length).toBe(1);
+      expect((failed[0].data as any).attempts).toBe(10);
+
+      jest.useRealTimers();
+    });
+
+    test("does not schedule reconnect after max attempts exhausted", () => {
+      jest.useFakeTimers();
+
+      send("ws-connect", { url: "wss://example.com/ws/ABC123" });
+      lastSocket!.simulateOpen();
+
+      // Exhaust all attempts
+      for (let i = 0; i < 10; i++) {
+        lastSocket!.simulateClose(1006, "");
+        const reconnecting = findPosted("ws-reconnecting");
+        if (reconnecting.length > 0) {
+          const delay = (reconnecting[reconnecting.length - 1]!.data as any).delayMs;
+          jest.advanceTimersByTime(delay + 100);
+        }
+        if (i < 9) {
+          lastSocket!.simulateClose(1006, "");
+        }
+      }
+
+      lastSocket!.simulateClose(1006, "");
+
+      // Should have exactly 10 ws-reconnecting messages, not more
+      const reconnecting = findPosted("ws-reconnecting");
+      expect(reconnecting.length).toBe(10);
+
+      jest.useRealTimers();
+    });
+
     test("exponential backoff increases delay", () => {
       send("ws-connect", { url: "wss://example.com/ws/ABC123" });
 
