@@ -172,6 +172,7 @@ function resetState() {
   stopHeartbeat();
   setSidebarView("idle");
   sidebar.postMessage("sb-status", { text: "Not connected" });
+  sidebar.postMessage("sb-warning", null);
 }
 
 function disconnect() {
@@ -180,6 +181,7 @@ function disconnect() {
   }
   overlay.postMessage("ws-disconnect", {});
   resetState();
+  osd.show("Watch Party: Disconnected");
 }
 
 // ── Sidebar: create room ───────────────────────────────────────────
@@ -400,6 +402,9 @@ function handleServerMessage(msg: Record<string, unknown>) {
     case "presence":
       onPresence(msg);
       break;
+    case "goodbye":
+      onGoodbye(msg);
+      break;
     case "warning":
       onWarning(msg);
       break;
@@ -470,6 +475,13 @@ function onAuthError(msg: Record<string, unknown>) {
   });
 }
 
+function onGoodbye(msg: Record<string, unknown>) {
+  const reason = msg.reason as string | undefined;
+  log.log(`Peer goodbye: reason=${reason ?? "unknown"}`);
+  sidebar.postMessage("sb-peer", { present: false });
+  osd.show("Watch Party: Peer left the room");
+}
+
 function onPresence(msg: Record<string, unknown>) {
   const event = msg.event as string;
   log.log(`Presence: ${event} (${String(msg.role)})`);
@@ -478,6 +490,7 @@ function onPresence(msg: Record<string, unknown>) {
     sidebar.postMessage("sb-peer", { present: true, name: "Peer connected" });
   } else if (event === "peer-left") {
     sidebar.postMessage("sb-peer", { present: false });
+    osd.show("Watch Party: Peer disconnected");
   }
 }
 

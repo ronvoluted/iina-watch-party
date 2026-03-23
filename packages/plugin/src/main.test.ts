@@ -606,6 +606,68 @@ describe("main connection state", () => {
       expect(disconnect).toBeDefined();
       expect(findOverlayPosted("ws-send")).toEqual([]);
     });
+
+    test("shows OSD on leave", () => {
+      doCreateRoom();
+      osdMessages = [];
+
+      sidebarSend("leave-room");
+
+      expect(osdMessages.some((m) => m.includes("Disconnected"))).toBe(true);
+    });
+
+    test("clears warnings on leave", () => {
+      doCreateRoom();
+      sidebarPosted = [];
+
+      sidebarSend("leave-room");
+
+      const warning = findSidebarPosted("sb-warning");
+      expect(warning.length).toBeGreaterThan(0);
+      expect(d(warning[warning.length - 1]).text).toBeUndefined();
+    });
+
+    test("resets status text on leave", () => {
+      doCreateRoom();
+      sidebarPosted = [];
+
+      sidebarSend("leave-room");
+
+      const status = lastSidebarPosted("sb-status");
+      expect(status).toBeDefined();
+      expect(d(status).text).toBe("Not connected");
+    });
+  });
+
+  describe("goodbye from peer", () => {
+    test("updates peer status on peer goodbye", () => {
+      doCreateRoom();
+      sidebarPosted = [];
+
+      serverSend({ type: "goodbye", reason: "user-leave" });
+
+      const peer = lastSidebarPosted("sb-peer");
+      expect(peer).toBeDefined();
+      expect(d(peer).present).toBe(false);
+    });
+
+    test("shows OSD on peer goodbye", () => {
+      doCreateRoom();
+      osdMessages = [];
+
+      serverSend({ type: "goodbye", reason: "user-leave" });
+
+      expect(osdMessages.some((m) => m.includes("Peer left"))).toBe(true);
+    });
+
+    test("does not disconnect self on peer goodbye", () => {
+      doCreateRoom();
+      overlayPosted = [];
+
+      serverSend({ type: "goodbye", reason: "user-leave" });
+
+      expect(findOverlayPosted("ws-disconnect")).toEqual([]);
+    });
   });
 
   describe("presence events", () => {
@@ -633,6 +695,17 @@ describe("main connection state", () => {
       const peer = lastSidebarPosted("sb-peer");
       expect(peer).toBeDefined();
       expect(d(peer).present).toBe(false);
+    });
+
+    test("shows OSD on peer-left presence", () => {
+      doCreateRoom();
+      osdMessages = [];
+
+      overlaySend("ws-message", {
+        data: JSON.stringify({ type: "presence", event: "peer-left", role: "guest" }),
+      });
+
+      expect(osdMessages.some((m) => m.includes("disconnected"))).toBe(true);
     });
 
     test("updates peer status on peer-replaced", () => {
