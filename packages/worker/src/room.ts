@@ -62,6 +62,7 @@ interface WsAttachment {
   role: string;
   connectedAtMs: number;
   file?: FileMetadata;
+  displayName?: string;
 }
 
 function isValidRoomCode(code: string): boolean {
@@ -99,7 +100,6 @@ export class Room extends DurableObject {
     this.ctx.storage.sql.exec(
       `CREATE TABLE IF NOT EXISTS room_meta (
         room_code TEXT PRIMARY KEY,
-        secret_hash TEXT NOT NULL,
         created_at_ms INTEGER NOT NULL,
         expires_at_ms INTEGER NOT NULL
       )`,
@@ -238,7 +238,14 @@ export class Room extends DurableObject {
       return;
     }
 
-    // Relay all other valid types
+    // Log and relay
+    const logCtx: Record<string, unknown> = { type, from: att.role };
+    if (parsed.positionMs !== undefined) logCtx.positionMs = parsed.positionMs;
+    if (parsed.paused !== undefined) logCtx.paused = parsed.paused;
+    if (parsed.speed !== undefined) logCtx.speed = parsed.speed;
+    if (parsed.cause !== undefined) logCtx.cause = parsed.cause;
+    roomLog("info", "Relay", logCtx);
+
     this.relayToPeer(ws, message);
   }
 
@@ -354,7 +361,7 @@ export class Room extends DurableObject {
 
   /**
    * Handle an auth message from an unauthenticated WebSocket.
-   * Verifies secret, assigns/restores role, handles replacement.
+   * Assigns/restores role, handles replacement.
    */
   private async handleAuth(
     ws: WebSocket,
@@ -362,16 +369,6 @@ export class Room extends DurableObject {
     att: WsAttachment,
   ): Promise<void> {
     // Validate required fields
-    if (typeof parsed.secret !== "string" || parsed.secret === "") {
-      roomLog("warn", "Auth rejected: missing secret");
-      this.sendServerMessage(ws, "auth-error", {
-        code: "missing-secret",
-        message: "Secret is required",
-      });
-      ws.close(4003, "Missing secret");
-      return;
-    }
-
     if (typeof parsed.sessionId !== "string" || parsed.sessionId === "") {
       roomLog("warn", "Auth rejected: missing sessionId");
       this.sendServerMessage(ws, "auth-error", {
@@ -385,7 +382,7 @@ export class Room extends DurableObject {
     // Fetch room metadata
     const rows = this.ctx.storage.sql
       .exec(
-        "SELECT room_code, secret_hash, expires_at_ms FROM room_meta LIMIT 1",
+        "SELECT room_code, expires_at_ms FROM room_meta LIMIT 1",
       )
       .toArray();
 
@@ -400,7 +397,6 @@ export class Room extends DurableObject {
     }
 
     const roomCode = rows[0].room_code as string;
-    const storedHash = rows[0].secret_hash as string;
     const expiresAtMs = rows[0].expires_at_ms as number;
 
     if (Date.now() >= expiresAtMs) {
@@ -413,19 +409,8 @@ export class Room extends DurableObject {
       return;
     }
 
-    // Verify secret hash
-    const hashHex = await this.hashSecret(parsed.secret as string);
-    if (hashHex !== storedHash) {
-      roomLog("warn", "Auth rejected: invalid secret", { roomCode });
-      this.sendServerMessage(ws, "auth-error", {
-        code: "invalid-secret",
-        message: "Invalid secret",
-      });
-      ws.close(4003, "Invalid secret");
-      return;
-    }
-
     const sessionId = parsed.sessionId as string;
+    const displayName = typeof parsed.displayName === "string" ? parsed.displayName : undefined;
 
     // Extract file metadata from auth message
     const rawFile =
@@ -461,7 +446,7 @@ export class Room extends DurableObject {
         wasReplaced = true;
       }
 
-      this.setAuthenticated(ws, att, sessionId, role, file);
+      this.setAuthenticated(ws, att, sessionId, role, file, displayName);
       const peerPresent = connectedPeers.length > 0;
 
       roomLog("info", "Auth OK (reconnect)", {
@@ -476,12 +461,14 @@ export class Room extends DurableObject {
         roomCode,
         expiresAtMs,
         peerPresent,
+        peerDisplayName: peerPresent ? connectedPeers[0].att.displayName : undefined,
       });
 
       if (peerPresent) {
         this.sendServerMessage(connectedPeers[0].ws, "presence", {
           event: wasReplaced ? "peer-replaced" : "peer-joined",
           role,
+          displayName,
         });
         this.checkAndWarnFileMismatch(ws, connectedPeers[0].ws);
       }
@@ -513,7 +500,7 @@ export class Room extends DurableObject {
       role,
     );
 
-    this.setAuthenticated(ws, att, sessionId, role, file);
+    this.setAuthenticated(ws, att, sessionId, role, file, displayName);
     const peerPresent = connectedPeers.length > 0;
 
     roomLog("info", "Auth OK (new)", { roomCode, sessionId, role });
@@ -523,19 +510,21 @@ export class Room extends DurableObject {
       roomCode,
       expiresAtMs,
       peerPresent,
+      peerDisplayName: peerPresent ? connectedPeers[0].att.displayName : undefined,
     });
 
     if (peerPresent) {
       this.sendServerMessage(connectedPeers[0].ws, "presence", {
         event: "peer-joined",
         role,
+        displayName,
       });
       this.checkAndWarnFileMismatch(ws, connectedPeers[0].ws);
     }
   }
 
   /**
-   * Initialize the room. Stores the room code and a SHA-256 hash of the secret.
+   * Initialize the room. Stores the room code and expiry.
    * Returns 409 if the room is already initialized (code collision).
    */
   private async handleInit(request: Request): Promise<Response> {
@@ -550,17 +539,12 @@ export class Room extends DurableObject {
       return jsonResponse({ error: "Request body must be a JSON object" }, 400);
     }
 
-    const { roomCode, secret } = body as {
+    const { roomCode } = body as {
       roomCode: unknown;
-      secret: unknown;
     };
 
     if (typeof roomCode !== "string" || !isValidRoomCode(roomCode)) {
       return jsonResponse({ error: "Invalid room code format" }, 400);
-    }
-
-    if (typeof secret !== "string" || secret.length === 0) {
-      return jsonResponse({ error: "Secret is required" }, 400);
     }
 
     // Check if already initialized (not expired)
@@ -578,15 +562,13 @@ export class Room extends DurableObject {
       this.ctx.storage.sql.exec("DELETE FROM participants");
     }
 
-    const secretHash = await this.hashSecret(secret);
     const now = Date.now();
     const expiresAtMs = now + ROOM_TTL_MS;
 
     this.ctx.storage.sql.exec(
-      `INSERT INTO room_meta (room_code, secret_hash, created_at_ms, expires_at_ms)
-       VALUES (?, ?, ?, ?)`,
+      `INSERT INTO room_meta (room_code, created_at_ms, expires_at_ms)
+       VALUES (?, ?, ?)`,
       roomCode,
-      secretHash,
       now,
       expiresAtMs,
     );
@@ -643,6 +625,7 @@ export class Room extends DurableObject {
     sessionId: string,
     role: string,
     file?: FileMetadata,
+    displayName?: string,
   ): void {
     ws.serializeAttachment({
       ...att,
@@ -650,6 +633,7 @@ export class Room extends DurableObject {
       sessionId,
       role,
       file,
+      displayName,
     } satisfies WsAttachment);
   }
 
@@ -676,28 +660,36 @@ export class Room extends DurableObject {
     const fileB = this.getAttachment(wsB).file;
     if (!fileA || !fileB) return;
 
-    const reasons: string[] = [];
+    let nameMismatch = false;
+    let durationDiffStr: string | null = null;
 
-    // Duration comparison — primary signal
-    if (fileA.durationMs != null && fileB.durationMs != null) {
-      const diff = Math.abs(fileA.durationMs - fileB.durationMs);
-      if (diff > FILE_DURATION_TOLERANCE_MS) {
-        reasons.push(`duration differs by ${Math.round(diff / 1000)}s`);
-      }
-    }
-
-    // Filename comparison — secondary signal
+    // Filename comparison
     if (
       fileA.name != null && fileB.name != null &&
       fileA.name !== "" && fileB.name !== "" &&
       fileA.name !== fileB.name
     ) {
-      reasons.push("filenames differ");
+      nameMismatch = true;
     }
 
-    if (reasons.length === 0) return;
+    // Duration comparison
+    if (fileA.durationMs != null && fileB.durationMs != null) {
+      const diff = Math.abs(fileA.durationMs - fileB.durationMs);
+      if (diff > FILE_DURATION_TOLERANCE_MS) {
+        durationDiffStr = `${Math.round(diff / 1000)}s`;
+      }
+    }
 
-    const message = `File mismatch: ${reasons.join(", ")}`;
+    if (!nameMismatch && !durationDiffStr) return;
+
+    let message: string;
+    if (nameMismatch && durationDiffStr) {
+      message = "<strong>Warning:</strong> filenames and durations of videos being watched do not match";
+    } else if (nameMismatch) {
+      message = "<strong>Warning:</strong> filenames of videos being watched do not match";
+    } else {
+      message = "<strong>Warning:</strong> durations of videos being watched do not match";
+    }
     this.sendServerMessage(wsA, "warning", { code: "file-mismatch", message });
     this.sendServerMessage(wsB, "warning", { code: "file-mismatch", message });
   }
@@ -747,16 +739,6 @@ export class Room extends DurableObject {
     } catch {
       // Socket may already be closed
     }
-  }
-
-  private async hashSecret(secret: string): Promise<string> {
-    const hashBuffer = await crypto.subtle.digest(
-      "SHA-256",
-      new TextEncoder().encode(secret),
-    );
-    return Array.from(new Uint8Array(hashBuffer))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
   }
 
   private async scheduleNextAlarm(): Promise<void> {

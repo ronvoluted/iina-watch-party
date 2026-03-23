@@ -25,23 +25,27 @@
 
 <div class="field">
   <label for="backendUrl">Backend URL</label>
-  <input id="backendUrl" type="url" placeholder="https://your-worker.workers.dev" />
-  <p class="hint" id="backendUrl-hint">The Cloudflare Worker URL for your watch party backend.</p>
+  <input id="backendUrl" data-pref-key="backendUrl" type="url" placeholder="https://your-worker.workers.dev" />
+  <p class="hint" id="backendUrl-hint">The Cloudflare Worker URL for your watch party backend</p>
 </div>
 
 <div class="field">
   <label for="displayName">Display Name</label>
-  <input id="displayName" type="text" placeholder="Your name" maxlength="32" />
-  <p class="hint" id="displayName-hint">Shown to your watch party peer.</p>
+  <input id="displayName" data-pref-key="displayName" type="text" placeholder="Your name" maxlength="32" />
+  <p class="hint" id="displayName-hint">Shown to your watch party peer</p>
 </div>
 
 <div class="field">
   <label for="driftThresholdMs">Drift Threshold (ms)</label>
-  <input id="driftThresholdMs" type="number" value="2000" min="500" max="10000" step="100" />
-  <p class="hint" id="driftThresholdMs-hint">How far apart playback can drift before correction. 500–10000 ms.</p>
+  <input id="driftThresholdMs" data-pref-key="driftThresholdMs" data-type="int" type="number" value="2000" min="500" max="10000" step="100" />
+  <p class="hint" id="driftThresholdMs-hint">How far apart playback can drift before correction (500–10000 ms)</p>
 </div>
 
 <script>
+  // IINA automatically reads and saves inputs marked with data-pref-key using
+  // iina.preferences.get(key, callback) on load and iina.preferences.set(key, value)
+  // on change events. The script below is for validation hints only.
+
   var fields = ["backendUrl", "displayName", "driftThresholdMs"];
 
   function validate(key, value) {
@@ -77,22 +81,21 @@
     input.classList.remove("invalid");
     if (key === "backendUrl") hint.textContent = "The Cloudflare Worker URL for your watch party backend.";
     if (key === "displayName") hint.textContent = "Shown to your watch party peer.";
-    if (key === "driftThresholdMs") hint.textContent = "How far apart playback can drift before correction. 500\u201310000 ms.";
+    if (key === "driftThresholdMs") hint.textContent = "How far apart playback can drift before correction (500\u201310000 ms)";
     return true;
   }
 
   fields.forEach(function (key) {
     var el = document.getElementById(key);
-    var stored = iina.preference.get(key);
-    if (stored != null) el.value = stored;
-    el.addEventListener("change", function () {
-      var value = key === "driftThresholdMs" ? Number(el.value) : el.value;
-      if (validate(key, el.value)) {
-        iina.preference.set(key, value);
-      }
-    });
     el.addEventListener("input", function () {
       validate(key, el.value);
+      // IINA auto-wiring saves on "change" (blur), but switching to another
+      // settings tab can unload the page before blur fires.  Eagerly persist
+      // on every keystroke so values are never lost.
+      var val = el.dataset.type === "int" ? parseInt(el.value, 10) : el.value;
+      if (typeof iina !== "undefined" && iina.preferences) {
+        iina.preferences.set(key, val);
+      }
     });
   });
 </script>

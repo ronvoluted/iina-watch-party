@@ -95,7 +95,7 @@ describe("bundleEntry", () => {
 describe("validateBuild", () => {
   test("returns valid for a complete build output", () => {
     // Use the real build output (built by beforeAll in integration suite)
-    const buildDir = join(PLUGIN_ROOT, "build");
+    const buildDir = join(PLUGIN_ROOT, "iina-watch-party");
     if (!existsSync(buildDir)) {
       // Build hasn't run yet; skip
       return;

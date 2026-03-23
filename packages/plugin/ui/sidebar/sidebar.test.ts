@@ -68,7 +68,7 @@ function setupGlobals() {
   const elementIds = [
     "view-idle", "view-connecting", "view-connected", "view-error",
     "idle-status", "invite-input", "connecting-text",
-    "connected-status", "room-code", "invite-display", "invite-section",
+    "connected-status", "room-code", "invite-section",
     "peer-dot", "peer-name", "warning-section", "warning-text",
     "error-text",
     "btn-create", "btn-join", "btn-copy-invite", "btn-leave", "btn-back",
@@ -199,36 +199,36 @@ describe("sidebar shell", () => {
       expect(msg).toBeDefined();
     });
 
-    test("Join Room posts join-room with invite string", () => {
-      elements["invite-input"].value = "ABC123:secretdata";
+    test("Join Room posts join-room with room code", () => {
+      elements["invite-input"].value = "ABC123";
       clickButton("btn-join");
       const msg = lastPosted("join-room");
       expect(msg).toBeDefined();
-      expect((msg!.data as any).invite).toBe("ABC123:secretdata");
+      expect((msg!.data as any).invite).toBe("ABC123");
     });
 
-    test("Join Room does not post when invite is empty", () => {
+    test("Join Room does not post when input is empty", () => {
       elements["invite-input"].value = "";
       clickButton("btn-join");
       expect(findPosted("join-room")).toEqual([]);
     });
 
-    test("Join Room trims whitespace from invite", () => {
-      elements["invite-input"].value = "  ABC123:secret  ";
+    test("Join Room trims whitespace from input", () => {
+      elements["invite-input"].value = "  ABC123  ";
       clickButton("btn-join");
       const msg = lastPosted("join-room");
-      expect((msg!.data as any).invite).toBe("ABC123:secret");
+      expect((msg!.data as any).invite).toBe("ABC123");
     });
 
-    test("Enter key in invite input triggers join", () => {
-      elements["invite-input"].value = "XYZ789:token";
+    test("Enter key in input triggers join", () => {
+      elements["invite-input"].value = "XYZ789";
       const keydownListeners = elements["invite-input"]._listeners["keydown"] || [];
       for (const fn of keydownListeners) {
         fn({ key: "Enter" });
       }
       const msg = lastPosted("join-room");
       expect(msg).toBeDefined();
-      expect((msg!.data as any).invite).toBe("XYZ789:token");
+      expect((msg!.data as any).invite).toBe("XYZ789");
     });
 
     test("Copy Invite posts copy-invite message", () => {
@@ -253,24 +253,8 @@ describe("sidebar shell", () => {
 
   describe("sb-room updates", () => {
     test("sets room code text", () => {
-      send("sb-room", { code: "ABC123", invite: "ABC123:secret" });
+      send("sb-room", { code: "ABC123" });
       expect(elements["room-code"].textContent).toBe("ABC123");
-    });
-
-    test("sets invite display text", () => {
-      send("sb-room", { code: "ABC123", invite: "ABC123:secret" });
-      expect(elements["invite-display"].textContent).toBe("ABC123:secret");
-    });
-
-    test("shows invite section when invite present", () => {
-      elements["invite-section"].classList.add("hidden");
-      send("sb-room", { code: "ABC123", invite: "ABC123:secret" });
-      expect(elements["invite-section"].classList.contains("hidden")).toBe(false);
-    });
-
-    test("hides invite section when no invite", () => {
-      send("sb-room", { code: "ABC123", invite: "" });
-      expect(elements["invite-section"].classList.contains("hidden")).toBe(true);
     });
 
     test("ignores null data", () => {

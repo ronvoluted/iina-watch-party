@@ -20,7 +20,7 @@
     "test:root": "bun test tests/",
     "lint": "eslint .",
     "typecheck": "tsc --build",
-    "clean": "rm -rf packages/*/dist packages/plugin/build",
+    "clean": "rm -rf packages/*/dist packages/plugin/iina-watch-party",
     "pack": "bun run build && bun run --filter @iina-watch-party/plugin pack",
     "link": "bun run build && bun run --filter @iina-watch-party/plugin link",
     "deploy": "bun run build && bun run --filter @iina-watch-party/worker deploy"

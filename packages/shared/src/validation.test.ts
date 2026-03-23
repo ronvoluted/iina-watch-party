@@ -122,7 +122,6 @@ describe("auth message", () => {
     json({
       ...envelope(),
       type: "auth",
-      secret: "abc123",
       file: { name: "video.mp4", durationMs: 60000 },
     });
 
@@ -136,7 +135,6 @@ describe("auth message", () => {
         json({
           ...envelope(),
           type: "auth",
-          secret: "abc",
           displayName: "Ron",
           desiredRole: "host",
           file: { name: "v.mp4", durationMs: 1000, sizeBytes: 500 },
@@ -145,17 +143,10 @@ describe("auth message", () => {
     );
   });
 
-  test("rejects missing secret", () => {
-    expectErr(
-      validateMessage(json({ ...envelope(), type: "auth", file: {} })),
-      "secret",
-    );
-  });
-
   test("rejects invalid desiredRole", () => {
     expectErr(
       validateMessage(
-        json({ ...envelope(), type: "auth", secret: "s", desiredRole: "admin", file: {} }),
+        json({ ...envelope(), type: "auth", desiredRole: "admin", file: {} }),
       ),
       "desiredRole",
     );
@@ -163,7 +154,7 @@ describe("auth message", () => {
 
   test("rejects missing file", () => {
     expectErr(
-      validateMessage(json({ ...envelope(), type: "auth", secret: "s" })),
+      validateMessage(json({ ...envelope(), type: "auth" })),
       "file",
     );
   });
@@ -171,7 +162,7 @@ describe("auth message", () => {
   test("rejects negative file.durationMs", () => {
     expectErr(
       validateMessage(
-        json({ ...envelope(), type: "auth", secret: "s", file: { durationMs: -1 } }),
+        json({ ...envelope(), type: "auth", file: { durationMs: -1 } }),
       ),
       "file.durationMs",
     );
@@ -180,7 +171,7 @@ describe("auth message", () => {
   test("rejects negative file.sizeBytes", () => {
     expectErr(
       validateMessage(
-        json({ ...envelope(), type: "auth", secret: "s", file: { sizeBytes: -100 } }),
+        json({ ...envelope(), type: "auth", file: { sizeBytes: -100 } }),
       ),
       "file.sizeBytes",
     );
@@ -698,17 +689,10 @@ describe("boundary and edge cases", () => {
 // ---------------------------------------------------------------------------
 
 describe("auth edge cases", () => {
-  test("rejects empty secret string", () => {
-    expectErr(
-      validateMessage(json({ ...envelope(), type: "auth", secret: "", file: {} })),
-      "secret",
-    );
-  });
-
   test("rejects displayName as number", () => {
     expectErr(
       validateMessage(
-        json({ ...envelope(), type: "auth", secret: "s", displayName: 42, file: {} }),
+        json({ ...envelope(), type: "auth", displayName: 42, file: {} }),
       ),
       "displayName",
     );
@@ -717,7 +701,7 @@ describe("auth edge cases", () => {
   test("rejects file.name as number", () => {
     expectErr(
       validateMessage(
-        json({ ...envelope(), type: "auth", secret: "s", file: { name: 123 } }),
+        json({ ...envelope(), type: "auth", file: { name: 123 } }),
       ),
       "file.name",
     );
@@ -726,7 +710,7 @@ describe("auth edge cases", () => {
   test("rejects file as array", () => {
     expectErr(
       validateMessage(
-        json({ ...envelope(), type: "auth", secret: "s", file: [1, 2] }),
+        json({ ...envelope(), type: "auth", file: [1, 2] }),
       ),
       "file",
     );
@@ -734,7 +718,7 @@ describe("auth edge cases", () => {
 
   test("accepts auth with minimal file (empty object)", () => {
     expectOk(
-      validateMessage(json({ ...envelope(), type: "auth", secret: "key", file: {} })),
+      validateMessage(json({ ...envelope(), type: "auth", file: {} })),
     );
   });
 
@@ -744,7 +728,6 @@ describe("auth edge cases", () => {
         json({
           ...envelope(),
           type: "auth",
-          secret: "key",
           displayName: "Alice",
           file: {},
         }),
@@ -758,7 +741,6 @@ describe("auth edge cases", () => {
         json({
           ...envelope(),
           type: "auth",
-          secret: "key",
           desiredRole: "guest",
           file: {},
         }),

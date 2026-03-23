@@ -114,13 +114,12 @@ describe("WebSocket message rate limiting", () => {
 
   async function createRoom(): Promise<{
     roomCode: string;
-    secret: string;
   }> {
     const res = await SELF.fetch("https://example.com/api/rooms", {
       method: "POST",
     });
     expect(res.status).toBe(200);
-    return (await res.json()) as { roomCode: string; secret: string };
+    return (await res.json()) as { roomCode: string };
   }
 
   async function connectWs(roomCode: string): Promise<WebSocket> {
@@ -148,7 +147,7 @@ describe("WebSocket message rate limiting", () => {
   }
 
   it("returns rate-limited error when flooding messages", async () => {
-    const { roomCode, secret } = await createRoom();
+    const { roomCode } = await createRoom();
     const ws = await connectWs(roomCode);
     const msgs = collectMessages(ws);
 
@@ -160,7 +159,6 @@ describe("WebSocket message rate limiting", () => {
         sessionId: "flood-test",
         messageId: crypto.randomUUID(),
         tsMs: Date.now(),
-        secret,
         file: {},
       }),
     );

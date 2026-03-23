@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(__dirname, "..");
-const buildDir = join(pkgRoot, "build");
+const buildDir = join(pkgRoot, "iina-watch-party");
 
 // ── helpers ────────────────────────────────────────────────────────────
 

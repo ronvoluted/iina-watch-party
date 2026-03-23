@@ -2,15 +2,33 @@
 
 Operational knowledge for deploying, running, and debugging IINA Watch Party.
 
+## IINA Plugin Platform
+
+### Overlay webview is non-functional for message passing
+
+IINA's overlay webview (`overlay.loadFile`) does **not** reliably execute JavaScript or relay `postMessage`/`onMessage` back to the plugin main entry. All network transport (WebSocket bridge, HTTP fetch) must go through the **sidebar** webview, which is the only webview with a working bidirectional message channel. The overlay webview is loaded but unused.
+
+### Webview `loadFile` and `onMessage` require `iina.window-loaded`
+
+`sidebar.loadFile()`, `overlay.loadFile()`, and all `*.onMessage()` handler registrations must happen inside an `iina.event.on("iina.window-loaded", ...)` callback — not at module top level. Before this event fires, there is no player window, so the webviews have no target. Handlers registered before `loadFile` are silently dropped. Reference: the official OpenSubtitles plugin follows this pattern.
+
+### Preferences only persist on blur, not on tab switch
+
+IINA's auto-wiring for `data-pref-key` inputs saves on `change` events, which for text/URL inputs only fire on **blur**. Switching to another IINA settings tab unloads the page before blur fires, losing the value. The preferences page works around this by calling `iina.preferences.set()` eagerly on `input` events.
+
 ## Deployment
 
-### Plugin `allowedDomains` is localhost-only
+### Plugin `allowedDomains` and custom domains
 
-`packages/plugin/Info.json` restricts network access to `localhost:*` and `127.0.0.1:*`. You **must** add your Worker's domain before deploying to users — the plugin silently fails to connect otherwise.
+`packages/plugin/Info.json` restricts network access. The default list includes `localhost:*`, `127.0.0.1:*`, and `*.workers.dev:*` — any Cloudflare Worker subdomain works out of the box. If you use a custom domain (e.g. `watchparty.example.com`), you must add it to `allowedDomains` and rebuild the plugin. The sidebar's `fetch()` and `WebSocket` connections will silently fail for unlisted domains.
+
+### Worker must serve CORS headers
+
+The sidebar webview runs in a WKWebView browser context that enforces CORS. The worker's `jsonResponse` helper includes `Access-Control-Allow-Origin: *` and the router handles `OPTIONS` preflight. If you strip these headers, the plugin's HTTP fetch will fail with "Load failed" and no useful error.
 
 ### `backendUrl` defaults to empty
 
-The plugin preference `backendUrl` ships as `""`. Users must set it manually in IINA's plugin preferences. There is no validation or helpful error if it stays empty.
+The plugin preference `backendUrl` ships as `""`. Users must set it manually in IINA's plugin preferences. The create/join flows show an error if it is empty.
 
 ### Cloudflare Durable Object migration tag
 
@@ -36,9 +54,9 @@ All values are hardcoded constants. Changing them requires a code change and red
 | WS rate limit refill | 10 tokens/s | `worker/src/room.ts` |
 | HTTP rate limit (room creation) | 10 req / 60 s per IP | `worker/src/index.ts` |
 | IP rate limiter prune interval | every 100 requests | `worker/src/index.ts` |
-| Max reconnect attempts | 10 | `plugin/ui/overlay/index.js` |
-| Reconnect base delay | 1 s | `plugin/ui/overlay/index.js` |
-| Reconnect max delay | 30 s | `plugin/ui/overlay/index.js` |
+| Max reconnect attempts | 10 | `plugin/ui/sidebar/index.js` |
+| Reconnect base delay | 1 s | `plugin/ui/sidebar/index.js` |
+| Reconnect max delay | 30 s | `plugin/ui/sidebar/index.js` |
 
 ## Rate Limiting
 
@@ -57,7 +75,7 @@ Exceeding the message rate (20 burst / 10 per second) closes the socket with cod
 | `4000` | Connection replaced (reconnect with same session) |
 | `4001` | Not authenticated |
 | `4002` | Room expired |
-| `4003` | Rate limited or missing credentials |
+| `4003` | Rate limited |
 | `4004` | Room not found |
 | `4005` | Room full |
 
@@ -88,8 +106,8 @@ While `mpv.paused-for-cache` is true, the sync engine skips drift correction. A 
 ## Room Lifecycle
 
 - Rooms expire 24 hours after creation. There is no renewal mechanism.
-- Room codes are 6 alphanumeric characters. On collision (unlikely), the worker retries up to 5 times.
-- Secrets are SHA-256 hashed before storage — the plaintext is never persisted. Losing the invite string means the room is inaccessible.
+- Room codes are 6 alphanumeric characters (human-friendly alphabet, no ambiguous chars like 0/O/1/I/L). On collision (unlikely), the worker retries up to 5 times.
+- The room code is all that's needed to join — there is no secret. This is appropriate for the threat model (casual watch party, 2-person rooms, 24h TTL, rate-limited).
 
 ## Testing
 
@@ -102,4 +120,4 @@ Worker tests use `@cloudflare/vitest-pool-workers`. SQLite-backed Durable Object
 
 ### Plugin tests mock IINA globals
 
-Plugin tests define mock `iina`, `core`, `mpv`, `http`, `overlay`, `sidebar`, `preferences`, and `console` globals. If the IINA plugin API changes, these mocks must be updated manually.
+Plugin tests define mock `iina`, `core`, `mpv`, `overlay`, `sidebar`, `preferences`, `osd`, `event`, and `console` globals. The test helper `loadMain()` fires `iina.window-loaded` after loading the module so that webview handlers are registered. If the IINA plugin API changes, these mocks must be updated manually.

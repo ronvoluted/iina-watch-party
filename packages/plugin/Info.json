@@ -1,7 +1,7 @@
 {
   "name": "Watch Party",
   "identifier": "com.ronvoluted.iina-watch-party",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Sync playback between devices over a real-time channel",
   "author": {
     "name": "ronvoluted"
@@ -24,6 +24,6 @@
   "allowedDomains": [
     "localhost:*",
     "127.0.0.1:*",
-    "iina-watch-party.quack.workers.dev:*"
+    "*.workers.dev:*"
   ]
 }

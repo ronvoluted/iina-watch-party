@@ -17,21 +17,12 @@ describe("Worker router", () => {
 
       const body = (await res.json()) as Record<string, unknown>;
       expect(body).toHaveProperty("roomCode");
-      expect(body).toHaveProperty("secret");
-      expect(body).toHaveProperty("invite");
       expect(body).toHaveProperty("wsUrl");
       expect(body).toHaveProperty("expiresAtMs");
 
       // Room code is 6 characters from the valid alphabet
       expect(typeof body.roomCode).toBe("string");
       expect((body.roomCode as string).length).toBe(6);
-
-      // Secret is non-empty base64url
-      expect(typeof body.secret).toBe("string");
-      expect((body.secret as string).length).toBeGreaterThan(0);
-
-      // Invite is roomCode:secret
-      expect(body.invite).toBe(`${body.roomCode}:${body.secret}`);
 
       // WebSocket URL uses the room code
       expect(body.wsUrl).toContain(`/ws/${body.roomCode}`);

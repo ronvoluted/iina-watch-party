@@ -45,9 +45,14 @@ describe("preferences page", () => {
       expect(html).toContain('maxlength="32"');
     });
 
-    test("references iina.preference API", () => {
-      expect(html).toContain("iina.preference.get");
-      expect(html).toContain("iina.preference.set");
+    test("uses data-pref-key for IINA auto-wiring", () => {
+      expect(html).toContain('data-pref-key="backendUrl"');
+      expect(html).toContain('data-pref-key="displayName"');
+      expect(html).toContain('data-pref-key="driftThresholdMs"');
+    });
+
+    test("uses data-type=int for numeric preference", () => {
+      expect(html).toContain('data-type="int"');
     });
   });
 
@@ -68,8 +73,7 @@ describe("preferences page", () => {
       expect(html).toContain("invalid");
     });
 
-    test("validates on both change and input events", () => {
-      expect(html).toContain('"change"');
+    test("validates on input events", () => {
       expect(html).toContain('"input"');
     });
   });

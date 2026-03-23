@@ -6,8 +6,8 @@
   "scripts": {
     "build": "bun run scripts/build.ts",
     "test": "bun test",
-    "link": "iina-plugin link build",
-    "pack": "iina-plugin pack build"
+    "link": "iina-plugin link iina-watch-party",
+    "pack": "rm -f *.iinaplgz && iina-plugin pack iina-watch-party"
   },
   "dependencies": {
     "@iina-watch-party/shared": "workspace:*"

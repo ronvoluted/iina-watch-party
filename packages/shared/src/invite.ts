@@ -1,10 +1,8 @@
 /**
  * Invite string parsing and formatting.
  *
- * Invite format: `ROOMCODE:base64url_secret`
- * - Room code: 6 uppercase characters from a human-friendly alphabet
- * - Separator: colon
- * - Secret: non-empty base64url string
+ * Invite format: a 6-character room code from a human-friendly alphabet.
+ * No secret — the room code alone is sufficient for joining.
  */
 
 import { ROOM_CODE_LENGTH } from "./constants.js";
@@ -16,12 +14,8 @@ const ROOM_CODE_PATTERN = new RegExp(
   `^[${ROOM_CODE_ALPHABET}]{${ROOM_CODE_LENGTH}}$`,
 );
 
-// base64url: A-Z, a-z, 0-9, -, _ (no padding required)
-const BASE64URL_PATTERN = /^[A-Za-z0-9\-_]+=*$/;
-
 export interface ParsedInvite {
   roomCode: string;
-  secret: string;
 }
 
 export type InviteParseResult =
@@ -29,9 +23,12 @@ export type InviteParseResult =
   | { ok: false; error: string };
 
 /**
- * Parse a raw invite string into room code and secret.
+ * Parse a raw invite string into a room code.
  *
- * Accepts the combined format `ROOMCODE:secret` as primary input.
+ * Accepts a bare room code (6 characters). Also accepts the legacy
+ * `ROOMCODE:secret` format for backwards compatibility — the secret
+ * portion is silently discarded.
+ *
  * Whitespace is trimmed before parsing.
  */
 export function parseInvite(raw: string): InviteParseResult {
@@ -41,32 +38,24 @@ export function parseInvite(raw: string): InviteParseResult {
     return { ok: false, error: "Invite string is empty" };
   }
 
-  const colonIndex = trimmed.indexOf(":");
-  if (colonIndex === -1) {
-    return { ok: false, error: "Invalid invite format: missing colon separator" };
-  }
-
-  const roomCode = trimmed.slice(0, colonIndex);
-  const secret = trimmed.slice(colonIndex + 1);
+  // Support legacy format: strip anything after a colon
+  const roomCode = trimmed.includes(":")
+    ? trimmed.slice(0, trimmed.indexOf(":"))
+    : trimmed;
 
   const codeError = validateRoomCode(roomCode);
   if (codeError !== null) {
     return { ok: false, error: codeError };
   }
 
-  const secretError = validateSecret(secret);
-  if (secretError !== null) {
-    return { ok: false, error: secretError };
-  }
-
-  return { ok: true, invite: { roomCode, secret } };
+  return { ok: true, invite: { roomCode } };
 }
 
 /**
- * Format a room code and secret into an invite string.
+ * Format a room code into an invite string.
  */
-export function formatInvite(roomCode: string, secret: string): string {
-  return `${roomCode}:${secret}`;
+export function formatInvite(roomCode: string): string {
+  return roomCode;
 }
 
 /**
@@ -78,19 +67,6 @@ export function validateRoomCode(code: string): string | null {
   }
   if (!ROOM_CODE_PATTERN.test(code)) {
     return "Room code contains invalid characters";
-  }
-  return null;
-}
-
-/**
- * Validate a secret. Returns an error string or null if valid.
- */
-function validateSecret(secret: string): string | null {
-  if (secret.length === 0) {
-    return "Secret is empty";
-  }
-  if (!BASE64URL_PATTERN.test(secret)) {
-    return "Secret contains invalid characters (expected base64url)";
   }
   return null;
 }

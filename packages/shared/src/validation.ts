@@ -144,10 +144,6 @@ function validateBody(
 // ---------------------------------------------------------------------------
 
 function validateAuth(obj: Record<string, unknown>): string | null {
-  if (typeof obj.secret !== "string" || obj.secret === "") {
-    return "missing or invalid field: secret";
-  }
-
   if (obj.displayName !== undefined && typeof obj.displayName !== "string") {
     return "invalid field: displayName";
   }

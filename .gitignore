@@ -1,9 +1,10 @@
-node_modules/
-.scaffold-verify/
-bun.lock
-*.tsbuildinfo
-packages/worker/src/*.d.ts
 .DS_Store
-dist/
-build/
+.scaffold-verify/
 .wrangler/
+*.tsbuildinfo
+build/
+bun.lock
+dist/
+iina-watch-party/
+node_modules/
+packages/worker/src/*.d.ts

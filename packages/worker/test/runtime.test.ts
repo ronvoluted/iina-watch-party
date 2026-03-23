@@ -9,7 +9,6 @@ const typedEnv = env as Env;
 
 async function createRoom(): Promise<{
   roomCode: string;
-  secret: string;
   expiresAtMs: number;
 }> {
   const res = await SELF.fetch("https://example.com/api/rooms", {
@@ -18,7 +17,6 @@ async function createRoom(): Promise<{
   expect(res.status).toBe(200);
   return (await res.json()) as {
     roomCode: string;
-    secret: string;
     expiresAtMs: number;
   };
 }
@@ -34,7 +32,6 @@ async function connectWs(roomCode: string): Promise<WebSocket> {
 }
 
 function authPayload(
-  secret: string,
   sessionId: string,
   overrides: Record<string, unknown> = {},
 ): string {
@@ -44,7 +41,6 @@ function authPayload(
     sessionId,
     messageId: crypto.randomUUID(),
     tsMs: Date.now(),
-    secret,
     file: {},
     ...overrides,
   });
@@ -95,10 +91,9 @@ function initRequest(body: unknown) {
 /** Initialize a room directly on the DO and return its stub. */
 async function initRoom(
   roomCode: string,
-  secret: string,
 ): Promise<DurableObjectStub> {
   const stub = getRoomStub(roomCode);
-  const res = await stub.fetch(initRequest({ roomCode, secret }));
+  const res = await stub.fetch(initRequest({ roomCode }));
   expect(res.status).toBe(200);
   return stub;
 }
@@ -114,9 +109,9 @@ describe("Worker runtime", () => {
 
   describe("binary messages", () => {
     it("rejects binary (ArrayBuffer) messages with error", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
       const ws = await connectWs(roomCode);
-      ws.send(authPayload(secret, "session-bin-1"));
+      ws.send(authPayload("session-bin-1"));
       await tick();
 
       const msgs = collectMessages(ws);
@@ -137,15 +132,15 @@ describe("Worker runtime", () => {
 
   describe("warning relay", () => {
     it("relays warning message between peers", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
 
       const ws1 = await connectWs(roomCode);
-      ws1.send(authPayload(secret, "session-warn-host"));
+      ws1.send(authPayload("session-warn-host"));
       await tick();
 
       const ws2 = await connectWs(roomCode);
       const msgs2 = collectMessages(ws2);
-      ws2.send(authPayload(secret, "session-warn-guest"));
+      ws2.send(authPayload("session-warn-guest"));
       await tick();
       msgs2.get().length = 0;
 
@@ -170,11 +165,11 @@ describe("Worker runtime", () => {
 
   describe("solo relay", () => {
     it("does not error when sending a message with no peer connected", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
 
       const ws = await connectWs(roomCode);
       const msgs = collectMessages(ws);
-      ws.send(authPayload(secret, "session-solo-host"));
+      ws.send(authPayload("session-solo-host"));
       await tick();
       msgs.get().length = 0;
 
@@ -194,11 +189,11 @@ describe("Worker runtime", () => {
 
   describe("server message format", () => {
     it("includes protocolVersion, sessionId=server, messageId, and tsMs", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
       const ws = await connectWs(roomCode);
       const msgs = collectMessages(ws);
 
-      ws.send(authPayload(secret, "session-fmt-1"));
+      ws.send(authPayload("session-fmt-1"));
       await tick();
 
       const authOk = msgs.get().find((m) => m.type === "auth-ok");
@@ -213,9 +208,9 @@ describe("Worker runtime", () => {
     });
 
     it("error messages include protocolVersion and server fields", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
       const ws = await connectWs(roomCode);
-      ws.send(authPayload(secret, "session-fmt-2"));
+      ws.send(authPayload("session-fmt-2"));
       await tick();
 
       const msgs = collectMessages(ws);
@@ -237,11 +232,11 @@ describe("Worker runtime", () => {
 
   describe("auth-ok response", () => {
     it("includes expiresAtMs in auth-ok response", async () => {
-      const { roomCode, secret, expiresAtMs } = await createRoom();
+      const { roomCode, expiresAtMs } = await createRoom();
       const ws = await connectWs(roomCode);
       const msgs = collectMessages(ws);
 
-      ws.send(authPayload(secret, "session-authok-1"));
+      ws.send(authPayload("session-authok-1"));
       await tick();
 
       const authOk = msgs.get().find((m) => m.type === "auth-ok");
@@ -265,7 +260,7 @@ describe("Worker runtime", () => {
       // We can't directly set expiry, so we init and check the status endpoint
       // Instead, test the DO directly with a room that we manually expire
       const res = await stub.fetch(
-        initRequest({ roomCode, secret: "test-secret" }),
+        initRequest({ roomCode }),
       );
       expect(res.status).toBe(200);
 
@@ -287,14 +282,14 @@ describe("Worker runtime", () => {
 
   describe("double auth", () => {
     it("rejects auth message type after already authenticated", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
       const ws = await connectWs(roomCode);
-      ws.send(authPayload(secret, "session-dbl-1"));
+      ws.send(authPayload("session-dbl-1"));
       await tick();
 
       const msgs = collectMessages(ws);
       // Try to auth again — "auth" is not in RELAY_TYPES
-      ws.send(authPayload(secret, "session-dbl-1"));
+      ws.send(authPayload("session-dbl-1"));
       await tick();
 
       const err = msgs.get().find((m) => m.type === "error");
@@ -309,12 +304,12 @@ describe("Worker runtime", () => {
 
   describe("unauthenticated close", () => {
     it("does not send peer-left when unauthenticated socket closes", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
 
       // Host connects and authenticates
       const ws1 = await connectWs(roomCode);
       const msgs1 = collectMessages(ws1);
-      ws1.send(authPayload(secret, "session-unauth-host"));
+      ws1.send(authPayload("session-unauth-host"));
       await tick();
       msgs1.get().length = 0;
 
@@ -336,9 +331,9 @@ describe("Worker runtime", () => {
 
   describe("non-relayable message types", () => {
     it("rejects unknown message type", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
       const ws = await connectWs(roomCode);
-      ws.send(authPayload(secret, "session-nrt-1"));
+      ws.send(authPayload("session-nrt-1"));
       await tick();
 
       const msgs = collectMessages(ws);
@@ -353,9 +348,9 @@ describe("Worker runtime", () => {
     });
 
     it("rejects message with missing type field", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
       const ws = await connectWs(roomCode);
-      ws.send(authPayload(secret, "session-nrt-2"));
+      ws.send(authPayload("session-nrt-2"));
       await tick();
 
       const msgs = collectMessages(ws);
@@ -384,13 +379,13 @@ describe("Worker runtime", () => {
       const roomCode = "RN2T3X";
       const stub = getRoomStub(roomCode);
       const res1 = await stub.fetch(
-        initRequest({ roomCode, secret: "secret-1" }),
+        initRequest({ roomCode }),
       );
       expect(res1.status).toBe(200);
 
       // Second init should be rejected (room exists)
       const res2 = await stub.fetch(
-        initRequest({ roomCode, secret: "secret-2" }),
+        initRequest({ roomCode }),
       );
       expect(res2.status).toBe(409);
     });
@@ -416,16 +411,16 @@ describe("Worker runtime", () => {
 
   describe("concurrent connections", () => {
     it("handles rapid connect-auth-relay cycle", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
 
       const ws1 = await connectWs(roomCode);
       const msgs1 = collectMessages(ws1);
-      ws1.send(authPayload(secret, "session-rapid-host"));
+      ws1.send(authPayload("session-rapid-host"));
       await tick();
 
       const ws2 = await connectWs(roomCode);
       const msgs2 = collectMessages(ws2);
-      ws2.send(authPayload(secret, "session-rapid-guest"));
+      ws2.send(authPayload("session-rapid-guest"));
       await tick();
       msgs1.get().length = 0;
       msgs2.get().length = 0;
@@ -460,15 +455,15 @@ describe("Worker runtime", () => {
     });
 
     it("relay works with a replacement guest after goodbye", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
 
       const ws1 = await connectWs(roomCode);
-      ws1.send(authPayload(secret, "session-cycle-host"));
+      ws1.send(authPayload("session-cycle-host"));
       await tick();
 
       // Guest 1 joins and leaves via goodbye
       const ws2 = await connectWs(roomCode);
-      ws2.send(authPayload(secret, "session-cycle-g1"));
+      ws2.send(authPayload("session-cycle-g1"));
       await tick();
       ws2.send(
         makeMessage("goodbye", "session-cycle-g1", { reason: "leaving" }),
@@ -478,7 +473,7 @@ describe("Worker runtime", () => {
       // Guest 2 joins
       const ws3 = await connectWs(roomCode);
       const msgs3 = collectMessages(ws3);
-      ws3.send(authPayload(secret, "session-cycle-g2"));
+      ws3.send(authPayload("session-cycle-g2"));
       await tick();
 
       const authOk = msgs3.get().find((m) => m.type === "auth-ok");
@@ -506,15 +501,15 @@ describe("Worker runtime", () => {
 
   describe("goodbye edge cases", () => {
     it("host sending goodbye removes host and notifies guest", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
 
       const ws1 = await connectWs(roomCode);
-      ws1.send(authPayload(secret, "session-hbye-host"));
+      ws1.send(authPayload("session-hbye-host"));
       await tick();
 
       const ws2 = await connectWs(roomCode);
       const msgs2 = collectMessages(ws2);
-      ws2.send(authPayload(secret, "session-hbye-guest"));
+      ws2.send(authPayload("session-hbye-guest"));
       await tick();
       msgs2.get().length = 0;
 
@@ -542,7 +537,7 @@ describe("Worker runtime", () => {
   describe("WebSocket upgrade edge cases", () => {
     it("rejects non-WebSocket request to /ws path on DO", async () => {
       const roomCode = "N4UPGD";
-      await initRoom(roomCode, "test-secret");
+      await initRoom(roomCode);
 
       const stub = getRoomStub(roomCode);
       const res = await stub.fetch(
@@ -557,15 +552,15 @@ describe("Worker runtime", () => {
 
   describe("sustained message validation", () => {
     it("continues to accept valid messages after sending an invalid one", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
 
       const ws1 = await connectWs(roomCode);
-      ws1.send(authPayload(secret, "session-recov-host"));
+      ws1.send(authPayload("session-recov-host"));
       await tick();
 
       const ws2 = await connectWs(roomCode);
       const msgs2 = collectMessages(ws2);
-      ws2.send(authPayload(secret, "session-recov-guest"));
+      ws2.send(authPayload("session-recov-guest"));
       await tick();
       msgs2.get().length = 0;
 

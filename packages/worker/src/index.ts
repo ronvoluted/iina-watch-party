@@ -47,20 +47,16 @@ function generateRoomCode(): string {
   return code;
 }
 
-/**
- * Generate a cryptographically random secret as base64url.
- */
-function generateSecret(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  // Convert to base64url without padding
-  const base64 = btoa(String.fromCharCode(...bytes));
-  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
+const CORS_HEADERS: Record<string, string> = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET, POST, OPTIONS",
+  "access-control-allow-headers": "content-type",
+};
 
 function jsonResponse(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...CORS_HEADERS },
   });
 }
 
@@ -79,7 +75,6 @@ async function handleCreateRoom(request: Request, env: Env): Promise<Response> {
   console.log("[router] Creating room");
   for (let attempt = 0; attempt < MAX_CODE_RETRIES; attempt++) {
     const roomCode = generateRoomCode();
-    const secret = generateSecret();
 
     // Deterministic DO id from room code
     const doId = env.ROOM.idFromName(roomCode);
@@ -90,7 +85,7 @@ async function handleCreateRoom(request: Request, env: Env): Promise<Response> {
       new Request(`https://do/init`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ roomCode, secret }),
+        body: JSON.stringify({ roomCode }),
       }),
     );
 
@@ -111,8 +106,6 @@ async function handleCreateRoom(request: Request, env: Env): Promise<Response> {
 
     return jsonResponse({
       roomCode,
-      secret,
-      invite: `${roomCode}:${secret}`,
       wsUrl,
       expiresAtMs: initData.expiresAtMs,
     });
@@ -191,6 +184,11 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
+    // CORS preflight
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+
     // Periodically prune expired rate-limit entries
     requestCount++;
     if (requestCount % PRUNE_INTERVAL === 0) {
@@ -223,6 +221,6 @@ export default {
       return handleWebSocketUpgrade(request, env, roomCode);
     }
 
-    return new Response("Not Found", { status: 404 });
+    return new Response("Not Found", { status: 404, headers: CORS_HEADERS });
   },
 } satisfies ExportedHandler<Env>;

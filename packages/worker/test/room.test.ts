@@ -24,7 +24,7 @@ describe("Room Durable Object", () => {
     it("initializes a new room and returns expiresAtMs", async () => {
       const stub = getRoomStub("ABCDEF");
       const res = await stub.fetch(
-        initRequest({ roomCode: "ABCDEF", secret: "test-secret-value" }),
+        initRequest({ roomCode: "ABCDEF" }),
       );
       expect(res.status).toBe(200);
 
@@ -40,7 +40,7 @@ describe("Room Durable Object", () => {
     it("returns JSON content-type on success", async () => {
       const stub = getRoomStub("CDEFGH");
       const res = await stub.fetch(
-        initRequest({ roomCode: "CDEFGH", secret: "my-secret" }),
+        initRequest({ roomCode: "CDEFGH" }),
       );
       expect(res.headers.get("content-type")).toBe("application/json");
     });
@@ -74,7 +74,7 @@ describe("Room Durable Object", () => {
     it("rejects missing roomCode", async () => {
       const stub = getRoomStub("DEFGHJ");
       const res = await stub.fetch(
-        initRequest({ secret: "my-secret" }),
+        initRequest({}),
       );
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: string };
@@ -84,7 +84,7 @@ describe("Room Durable Object", () => {
     it("rejects invalid roomCode format (too short)", async () => {
       const stub = getRoomStub("XYZABC");
       const res = await stub.fetch(
-        initRequest({ roomCode: "ABC", secret: "my-secret" }),
+        initRequest({ roomCode: "ABC" }),
       );
       expect(res.status).toBe(400);
     });
@@ -92,7 +92,7 @@ describe("Room Durable Object", () => {
     it("rejects invalid roomCode format (bad characters)", async () => {
       const stub = getRoomStub("XYZDEF");
       const res = await stub.fetch(
-        initRequest({ roomCode: "ABCD0I", secret: "my-secret" }),
+        initRequest({ roomCode: "ABCD0I" }),
       );
       expect(res.status).toBe(400);
     });
@@ -100,33 +100,7 @@ describe("Room Durable Object", () => {
     it("rejects non-string roomCode", async () => {
       const stub = getRoomStub("EFGHJK");
       const res = await stub.fetch(
-        initRequest({ roomCode: 123456, secret: "my-secret" }),
-      );
-      expect(res.status).toBe(400);
-    });
-
-    it("rejects missing secret", async () => {
-      const stub = getRoomStub("FGHJKM");
-      const res = await stub.fetch(
-        initRequest({ roomCode: "FGHJKM" }),
-      );
-      expect(res.status).toBe(400);
-      const body = (await res.json()) as { error: string };
-      expect(body.error).toContain("Secret");
-    });
-
-    it("rejects empty secret", async () => {
-      const stub = getRoomStub("GHJKMN");
-      const res = await stub.fetch(
-        initRequest({ roomCode: "GHJKMN", secret: "" }),
-      );
-      expect(res.status).toBe(400);
-    });
-
-    it("rejects non-string secret", async () => {
-      const stub = getRoomStub("HJKMNP");
-      const res = await stub.fetch(
-        initRequest({ roomCode: "HJKMNP", secret: 12345 }),
+        initRequest({ roomCode: 123456 }),
       );
       expect(res.status).toBe(400);
     });

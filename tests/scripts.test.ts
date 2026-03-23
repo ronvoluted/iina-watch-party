@@ -40,7 +40,7 @@ describe("root scripts", () => {
 
   test("clean script removes all build artifacts", () => {
     expect(pkg.scripts.clean).toBe(
-      "rm -rf packages/*/dist packages/plugin/build",
+      "rm -rf packages/*/dist packages/plugin/iina-watch-party",
     );
   });
 });
@@ -53,11 +53,11 @@ describe("plugin scripts", () => {
   });
 
   test("link calls iina-plugin link", () => {
-    expect(pkg.scripts.link).toBe("iina-plugin link build");
+    expect(pkg.scripts.link).toBe("iina-plugin link iina-watch-party");
   });
 
   test("pack calls iina-plugin pack", () => {
-    expect(pkg.scripts.pack).toBe("iina-plugin pack build");
+    expect(pkg.scripts.pack).toBe("rm -f *.iinaplgz && iina-plugin pack iina-watch-party");
   });
 });
 

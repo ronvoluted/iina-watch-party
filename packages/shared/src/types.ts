@@ -45,7 +45,6 @@ export interface FileMetadata {
 
 export interface AuthMessage extends MessageEnvelope {
   type: "auth";
-  secret: string;
   displayName?: string;
   desiredRole?: Role;
   file: FileMetadata;

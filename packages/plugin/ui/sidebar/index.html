@@ -12,6 +12,7 @@
     color: #333;
     -webkit-user-select: none;
     user-select: none;
+    height: 100vh;
   }
 
   /* ── Shared ─────────────────────────────────────── */
@@ -37,18 +38,20 @@
     border-color: #007aff;
   }
   button.primary:active { background: #005ecb; }
-  button.danger {
-    color: #ff3b30;
-    border-color: #ff3b30;
-  }
 
   input[type="text"] {
     width: 100%;
-    padding: 6px 8px;
+    padding: 8px 12px;
     border: 1px solid #ccc;
-    border-radius: 4px;
+    border-radius: 6px;
     font-size: 13px;
     font-family: inherit;
+  }
+  #invite-input {
+    text-transform: uppercase;
+  }
+  #invite-input::placeholder {
+    text-transform: none;
   }
 
   .status-line {
@@ -56,39 +59,53 @@
     color: #888;
   }
 
-  .invite-box {
-    padding: 8px;
-    background: #f5f5f5;
-    border-radius: 4px;
-    font-family: SF Mono, Menlo, monospace;
+  .status-with-dot {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     font-size: 12px;
-    word-break: break-all;
-    -webkit-user-select: text;
-    user-select: text;
+    color: #888;
   }
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #8e8e93;
+    flex-shrink: 0;
+  }
+  .status-dot.connected { background: #34c759; }
 
   .peer-info {
     display: flex;
     align-items: center;
     gap: 6px;
     font-size: 12px;
+    color: #888;
   }
   .peer-dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #34c759;
+    background: #007aff;
     flex-shrink: 0;
   }
   .peer-dot.offline { background: #8e8e93; }
 
+  .status-row {
+    display: flex;
+    justify-content: space-evenly;
+    align-items: center;
+    margin-bottom: 4px;
+  }
+
   .warning-box {
-    padding: 8px;
-    background: #fff3cd;
-    border: 1px solid #ffc107;
-    border-radius: 4px;
-    font-size: 12px;
-    color: #856404;
+    padding: 8px 12px;
+    background: gold;
+    border: 1px solid gold;
+    border-radius: 6px;
+    font-size: 13px;
+    color: #333;
+    text-align: center;
   }
 
   .error-box {
@@ -112,59 +129,89 @@
     margin-right: 6px;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Connecting (centered spinner, cancel at bottom) */
+  #view-connecting {
+    align-items: center;
+    min-height: calc(100vh - 24px);
+  }
+  #connecting-top-spacer { flex: 1; }
+  #connecting-bottom-spacer { flex: 1; }
+  #btn-cancel {
+    background: crimson;
+    color: #fff;
+    border-color: crimson;
+    font-weight: bold;
+    align-self: stretch;
+  }
+  #btn-cancel:active { background: #a0001c; }
+
+  /* ── Connected layout (leave button at bottom) ──── */
+  #view-connected {
+    min-height: calc(100vh - 24px);
+  }
+  #connected-spacer { flex: 1; }
+  #btn-leave {
+    background: crimson;
+    color: #fff;
+    border-color: crimson;
+    font-weight: bold;
+  }
+  #btn-leave:active { background: #a0001c; }
+
 </style>
 </head>
 <body>
 
 <!-- ── Idle view ──────────────────────────────────── -->
 <div id="view-idle" class="view">
-  <h2>Watch Party</h2>
-  <p class="status-line" id="idle-status">Not connected</p>
+  <div class="status-with-dot">
+    <span class="status-dot" id="idle-dot"></span>
+    <span id="idle-status">Not connected</span>
+  </div>
   <button id="btn-create" class="primary">Create Room</button>
   <div style="display:flex; align-items:center; gap:8px;">
-    <input id="invite-input" type="text" placeholder="Paste invite code…" />
+    <input id="invite-input" type="text" placeholder="Enter room code…" />
   </div>
   <button id="btn-join">Join Room</button>
 </div>
 
 <!-- ── Connecting view ───────────────────────────── -->
 <div id="view-connecting" class="view hidden">
-  <h2>Watch Party</h2>
+  <div id="connecting-top-spacer"></div>
   <p class="status-line"><span class="spinner"></span><span id="connecting-text">Connecting…</span></p>
+  <div id="connecting-bottom-spacer"></div>
+  <button id="btn-cancel">Cancel</button>
 </div>
 
 <!-- ── Connected view ────────────────────────────── -->
 <div id="view-connected" class="view hidden">
-  <h2>Watch Party</h2>
-  <p class="status-line" id="connected-status">Connected</p>
-
-  <div id="room-info">
-    <p class="status-line">Room: <strong id="room-code"></strong></p>
-  </div>
-
-  <div id="invite-section">
-    <p class="status-line">Invite:</p>
-    <div class="invite-box" id="invite-display"></div>
-    <button id="btn-copy-invite" style="margin-top:4px;">Copy Invite</button>
-  </div>
-
-  <div id="peer-section">
+  <div class="status-row">
+    <div class="status-with-dot">
+      <span class="status-dot connected" id="connected-dot"></span>
+      <span id="connected-status">Connected</span>
+    </div>
     <div class="peer-info">
       <span class="peer-dot" id="peer-dot"></span>
       <span id="peer-name">Waiting for peer…</span>
     </div>
   </div>
 
+  <div id="invite-section">
+    <button id="btn-copy-invite">Copy Room Code: <strong id="room-code"></strong></button>
+  </div>
+
   <div id="warning-section" class="hidden">
     <div class="warning-box" id="warning-text"></div>
   </div>
 
-  <button id="btn-leave" class="danger">Leave Room</button>
+  <div id="connected-spacer"></div>
+
+  <button id="btn-leave">Leave Room</button>
 </div>
 
 <!-- ── Error view ────────────────────────────────── -->
 <div id="view-error" class="view hidden">
-  <h2>Watch Party</h2>
   <div class="error-box" id="error-text"></div>
   <button id="btn-back">Back</button>
 </div>

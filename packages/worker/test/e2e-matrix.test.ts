@@ -7,7 +7,7 @@
  * Covers the matrix of:
  *  - All relay message types (play, pause, seek, speed, heartbeat, state, warning, goodbye)
  *  - Both relay directions (host→guest, guest→host)
- *  - Auth flows (new, reconnect, replacement, wrong secret, room full)
+ *  - Auth flows (new, reconnect, replacement, room full)
  *  - File mismatch detection through auth metadata
  *  - Rate limiting at the WebSocket message level
  *  - Validation enforcement (malformed, oversized, unknown types)
@@ -23,7 +23,6 @@ import { roomCreateLimiter } from "../src/index.js";
 
 async function createRoom(): Promise<{
   roomCode: string;
-  secret: string;
   expiresAtMs: number;
 }> {
   const res = await SELF.fetch("https://example.com/api/rooms", {
@@ -32,7 +31,6 @@ async function createRoom(): Promise<{
   expect(res.status).toBe(200);
   return (await res.json()) as {
     roomCode: string;
-    secret: string;
     expiresAtMs: number;
   };
 }
@@ -48,7 +46,6 @@ async function connectWs(roomCode: string): Promise<WebSocket> {
 }
 
 function authPayload(
-  secret: string,
   sessionId: string,
   overrides: Record<string, unknown> = {},
 ): string {
@@ -58,7 +55,6 @@ function authPayload(
     sessionId,
     messageId: crypto.randomUUID(),
     tsMs: Date.now(),
-    secret,
     file: {},
     ...overrides,
   });
@@ -102,29 +98,28 @@ function makeMessage(
 /** Set up a room with host and guest connected and authenticated. */
 async function setupRoom(prefix: string): Promise<{
   roomCode: string;
-  secret: string;
   hostWs: WebSocket;
   guestWs: WebSocket;
   hostMsgs: ReturnType<typeof collectMessages>;
   guestMsgs: ReturnType<typeof collectMessages>;
 }> {
-  const { roomCode, secret } = await createRoom();
+  const { roomCode } = await createRoom();
 
   const hostWs = await connectWs(roomCode);
   const hostMsgs = collectMessages(hostWs);
-  hostWs.send(authPayload(secret, `${prefix}-host`));
+  hostWs.send(authPayload(`${prefix}-host`));
   await tick();
 
   const guestWs = await connectWs(roomCode);
   const guestMsgs = collectMessages(guestWs);
-  guestWs.send(authPayload(secret, `${prefix}-guest`));
+  guestWs.send(authPayload(`${prefix}-guest`));
   await tick();
 
   // Clear auth/presence messages
   hostMsgs.clear();
   guestMsgs.clear();
 
-  return { roomCode, secret, hostWs, guestWs, hostMsgs, guestMsgs };
+  return { roomCode, hostWs, guestWs, hostMsgs, guestMsgs };
 }
 
 // ── Tests ────────────────────────────────────────────────────────
@@ -233,11 +228,11 @@ describe("E2E test matrix", () => {
 
   describe("auth flow matrix", () => {
     it("assigns host to first, guest to second participant", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
 
       const ws1 = await connectWs(roomCode);
       const msgs1 = collectMessages(ws1);
-      ws1.send(authPayload(secret, "auth-role-host"));
+      ws1.send(authPayload("auth-role-host"));
       await tick();
 
       const authOk1 = msgs1.get().find((m) => m.type === "auth-ok");
@@ -246,7 +241,7 @@ describe("E2E test matrix", () => {
 
       const ws2 = await connectWs(roomCode);
       const msgs2 = collectMessages(ws2);
-      ws2.send(authPayload(secret, "auth-role-guest"));
+      ws2.send(authPayload("auth-role-guest"));
       await tick();
 
       const authOk2 = msgs2.get().find((m) => m.type === "auth-ok");
@@ -262,33 +257,20 @@ describe("E2E test matrix", () => {
       ws2.close();
     });
 
-    it("rejects auth with wrong secret", async () => {
+    it("rejects third participant (room full)", async () => {
       const { roomCode } = await createRoom();
 
-      const ws = await connectWs(roomCode);
-      const msgs = collectMessages(ws);
-      ws.send(authPayload("wrong-secret", "auth-bad-secret"));
-      await tick();
-
-      const err = msgs.get().find((m) => m.type === "auth-error");
-      expect(err).toBeDefined();
-      expect(err!.code).toBe("invalid-secret");
-    });
-
-    it("rejects third participant (room full)", async () => {
-      const { roomCode, secret } = await createRoom();
-
       const ws1 = await connectWs(roomCode);
-      ws1.send(authPayload(secret, "auth-full-h"));
+      ws1.send(authPayload("auth-full-h"));
       await tick();
 
       const ws2 = await connectWs(roomCode);
-      ws2.send(authPayload(secret, "auth-full-g"));
+      ws2.send(authPayload("auth-full-g"));
       await tick();
 
       const ws3 = await connectWs(roomCode);
       const msgs3 = collectMessages(ws3);
-      ws3.send(authPayload(secret, "auth-full-third"));
+      ws3.send(authPayload("auth-full-third"));
       await tick();
 
       const err = msgs3.get().find((m) => m.type === "auth-error");
@@ -300,16 +282,16 @@ describe("E2E test matrix", () => {
     });
 
     it("allows reconnect with same sessionId after disconnect", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
 
       // Host connects
       const ws1 = await connectWs(roomCode);
-      ws1.send(authPayload(secret, "auth-reconn-host"));
+      ws1.send(authPayload("auth-reconn-host"));
       await tick();
 
       // Guest connects
       const ws2 = await connectWs(roomCode);
-      ws2.send(authPayload(secret, "auth-reconn-guest"));
+      ws2.send(authPayload("auth-reconn-guest"));
       await tick();
 
       // Guest disconnects
@@ -319,7 +301,7 @@ describe("E2E test matrix", () => {
       // Guest reconnects with same sessionId
       const ws3 = await connectWs(roomCode);
       const msgs3 = collectMessages(ws3);
-      ws3.send(authPayload(secret, "auth-reconn-guest"));
+      ws3.send(authPayload("auth-reconn-guest"));
       await tick();
 
       const authOk = msgs3.get().find((m) => m.type === "auth-ok");
@@ -332,22 +314,22 @@ describe("E2E test matrix", () => {
     });
 
     it("replaces stale connection on reconnect", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
 
       const ws1 = await connectWs(roomCode);
       const msgs1 = collectMessages(ws1);
-      ws1.send(authPayload(secret, "auth-replace-host"));
+      ws1.send(authPayload("auth-replace-host"));
       await tick();
 
       const ws2 = await connectWs(roomCode);
-      ws2.send(authPayload(secret, "auth-replace-guest"));
+      ws2.send(authPayload("auth-replace-guest"));
       await tick();
       msgs1.clear();
 
       // Guest reconnects without closing old socket
       const ws3 = await connectWs(roomCode);
       const msgs3 = collectMessages(ws3);
-      ws3.send(authPayload(secret, "auth-replace-guest"));
+      ws3.send(authPayload("auth-replace-guest"));
       await tick();
 
       const authOk = msgs3.get().find((m) => m.type === "auth-ok");
@@ -383,12 +365,12 @@ describe("E2E test matrix", () => {
 
   describe("file mismatch detection", () => {
     it("sends file-mismatch warning when durations differ significantly", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
 
       const ws1 = await connectWs(roomCode);
       const msgs1 = collectMessages(ws1);
       ws1.send(
-        authPayload(secret, "fmm-dur-host", {
+        authPayload("fmm-dur-host", {
           file: { name: "movie.mkv", durationMs: 120000 },
         }),
       );
@@ -397,7 +379,7 @@ describe("E2E test matrix", () => {
       const ws2 = await connectWs(roomCode);
       const msgs2 = collectMessages(ws2);
       ws2.send(
-        authPayload(secret, "fmm-dur-guest", {
+        authPayload("fmm-dur-guest", {
           file: { name: "movie.mkv", durationMs: 200000 },
         }),
       );
@@ -412,19 +394,19 @@ describe("E2E test matrix", () => {
       );
       expect(warn1).toBeDefined();
       expect(warn2).toBeDefined();
-      expect((warn1!.message as string)).toContain("duration differs");
+      expect((warn1!.message as string)).toContain("durations of videos");
 
       ws1.close();
       ws2.close();
     });
 
     it("sends file-mismatch warning when filenames differ", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
 
       const ws1 = await connectWs(roomCode);
       const msgs1 = collectMessages(ws1);
       ws1.send(
-        authPayload(secret, "fmm-name-host", {
+        authPayload("fmm-name-host", {
           file: { name: "episode01.mkv", durationMs: 60000 },
         }),
       );
@@ -432,7 +414,7 @@ describe("E2E test matrix", () => {
 
       const ws2 = await connectWs(roomCode);
       ws2.send(
-        authPayload(secret, "fmm-name-guest", {
+        authPayload("fmm-name-guest", {
           file: { name: "episode02.mkv", durationMs: 60000 },
         }),
       );
@@ -442,19 +424,19 @@ describe("E2E test matrix", () => {
         (m) => m.type === "warning" && m.code === "file-mismatch",
       );
       expect(warn1).toBeDefined();
-      expect((warn1!.message as string)).toContain("filenames differ");
+      expect((warn1!.message as string)).toContain("filenames of videos");
 
       ws1.close();
       ws2.close();
     });
 
     it("does NOT warn when files match", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
 
       const ws1 = await connectWs(roomCode);
       const msgs1 = collectMessages(ws1);
       ws1.send(
-        authPayload(secret, "fmm-ok-host", {
+        authPayload("fmm-ok-host", {
           file: { name: "movie.mkv", durationMs: 120000 },
         }),
       );
@@ -462,7 +444,7 @@ describe("E2E test matrix", () => {
 
       const ws2 = await connectWs(roomCode);
       ws2.send(
-        authPayload(secret, "fmm-ok-guest", {
+        authPayload("fmm-ok-guest", {
           file: { name: "movie.mkv", durationMs: 121000 },
         }),
       );
@@ -478,16 +460,16 @@ describe("E2E test matrix", () => {
     });
 
     it("does NOT warn when file metadata is absent", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
 
       const ws1 = await connectWs(roomCode);
       const msgs1 = collectMessages(ws1);
-      ws1.send(authPayload(secret, "fmm-no-host", { file: {} }));
+      ws1.send(authPayload("fmm-no-host", { file: {} }));
       await tick();
 
       const ws2 = await connectWs(roomCode);
       ws2.send(
-        authPayload(secret, "fmm-no-guest", {
+        authPayload("fmm-no-guest", {
           file: { name: "movie.mkv", durationMs: 120000 },
         }),
       );
@@ -575,10 +557,10 @@ describe("E2E test matrix", () => {
     });
 
     it("rejects auth message type after already authenticated", async () => {
-      const { secret, hostWs, guestWs, hostMsgs } =
+      const { hostWs, guestWs, hostMsgs } =
         await setupRoom("val-reauth");
 
-      hostWs.send(authPayload(secret, "val-reauth-host"));
+      hostWs.send(authPayload("val-reauth-host"));
       await tick();
 
       const err = hostMsgs.get().find((m) => m.type === "error");
@@ -660,16 +642,16 @@ describe("E2E test matrix", () => {
 
   describe("presence lifecycle", () => {
     it("notifies host when guest joins", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
 
       const ws1 = await connectWs(roomCode);
       const msgs1 = collectMessages(ws1);
-      ws1.send(authPayload(secret, "pres-join-host"));
+      ws1.send(authPayload("pres-join-host"));
       await tick();
       msgs1.clear();
 
       const ws2 = await connectWs(roomCode);
-      ws2.send(authPayload(secret, "pres-join-guest"));
+      ws2.send(authPayload("pres-join-guest"));
       await tick();
 
       const presence = msgs1.get().find((m) => m.type === "presence");
@@ -717,11 +699,11 @@ describe("E2E test matrix", () => {
     });
 
     it("does not send presence when unauthenticated socket closes", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
 
       const ws1 = await connectWs(roomCode);
       const msgs1 = collectMessages(ws1);
-      ws1.send(authPayload(secret, "pres-unauth-host"));
+      ws1.send(authPayload("pres-unauth-host"));
       await tick();
       msgs1.clear();
 
@@ -879,7 +861,7 @@ describe("E2E test matrix", () => {
     });
 
     it("guest replacement mid-session continues relay", async () => {
-      const { roomCode, secret, hostWs, guestWs, hostMsgs } =
+      const { roomCode, hostWs, guestWs, hostMsgs } =
         await setupRoom("seq-replace");
 
       // Guest disconnects
@@ -892,7 +874,7 @@ describe("E2E test matrix", () => {
       // New guest joins
       const ws3 = await connectWs(roomCode);
       const msgs3 = collectMessages(ws3);
-      ws3.send(authPayload(secret, "seq-replace-guest2"));
+      ws3.send(authPayload("seq-replace-guest2"));
       await tick();
 
       const authOk = msgs3.get().find((m) => m.type === "auth-ok");
@@ -980,9 +962,8 @@ describe("E2E test matrix", () => {
   describe("full room lifecycle", () => {
     it("create → auth → relay → goodbye → new guest → relay → close", async () => {
       // Step 1: Create room via HTTP
-      const { roomCode, secret, expiresAtMs } = await createRoom();
+      const { roomCode, expiresAtMs } = await createRoom();
       expect(roomCode).toMatch(/^[A-Z2-9]{6}$/);
-      expect(typeof secret).toBe("string");
       expect(expiresAtMs).toBeGreaterThan(Date.now());
 
       // Step 2: Verify room status
@@ -996,7 +977,7 @@ describe("E2E test matrix", () => {
       // Step 3: Host connects and authenticates
       const ws1 = await connectWs(roomCode);
       const msgs1 = collectMessages(ws1);
-      ws1.send(authPayload(secret, "lifecycle-host"));
+      ws1.send(authPayload("lifecycle-host"));
       await tick();
 
       const authOk1 = msgs1.get().find((m) => m.type === "auth-ok");
@@ -1006,7 +987,7 @@ describe("E2E test matrix", () => {
       // Step 4: Guest connects and authenticates
       const ws2 = await connectWs(roomCode);
       const msgs2 = collectMessages(ws2);
-      ws2.send(authPayload(secret, "lifecycle-guest1"));
+      ws2.send(authPayload("lifecycle-guest1"));
       await tick();
 
       const authOk2 = msgs2.get().find((m) => m.type === "auth-ok");
@@ -1039,7 +1020,7 @@ describe("E2E test matrix", () => {
       // Step 7: New guest joins
       const ws3 = await connectWs(roomCode);
       const msgs3 = collectMessages(ws3);
-      ws3.send(authPayload(secret, "lifecycle-guest2"));
+      ws3.send(authPayload("lifecycle-guest2"));
       await tick();
 
       const authOk3 = msgs3.get().find((m) => m.type === "auth-ok");
@@ -1071,11 +1052,11 @@ describe("E2E test matrix", () => {
 
   describe("server message envelope compliance", () => {
     it("all server-originated messages include full envelope", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
 
       const ws = await connectWs(roomCode);
       const msgs = collectMessages(ws);
-      ws.send(authPayload(secret, "envelope-test"));
+      ws.send(authPayload("envelope-test"));
       await tick();
 
       // auth-ok is server-originated
@@ -1109,16 +1090,16 @@ describe("E2E test matrix", () => {
     });
 
     it("presence messages include full envelope", async () => {
-      const { roomCode, secret } = await createRoom();
+      const { roomCode } = await createRoom();
 
       const ws1 = await connectWs(roomCode);
       const msgs1 = collectMessages(ws1);
-      ws1.send(authPayload(secret, "envelope-pres-host"));
+      ws1.send(authPayload("envelope-pres-host"));
       await tick();
       msgs1.clear();
 
       const ws2 = await connectWs(roomCode);
-      ws2.send(authPayload(secret, "envelope-pres-guest"));
+      ws2.send(authPayload("envelope-pres-guest"));
       await tick();
 
       const presence = msgs1.get().find((m) => m.type === "presence");

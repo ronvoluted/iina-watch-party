@@ -41,6 +41,7 @@ function setupGlobals() {
   overlayHandlers = {};
   sidebarHandlers = {};
   overlayPosted = [];
+      sidebarPosted = [];
   sidebarPosted = [];
   logMessages = [];
   osdMessages = [];
@@ -128,7 +129,10 @@ function loadMain() {
   const path = require.resolve("./main.ts");
   delete require.cache[path];
   require(path);
+  // Fire window-loaded so webview handlers are registered (mirrors IINA runtime)
+  fireEvent("iina.window-loaded");
   overlayPosted = [];
+      sidebarPosted = [];
   sidebarPosted = [];
   logMessages = [];
   osdMessages = [];
@@ -167,34 +171,32 @@ function fireEvent(name: string, ...args: unknown[]) {
 
 /** Parse the last ws-send message's JSON payload. */
 function lastSentProtocol(): Record<string, unknown> | undefined {
-  const send = lastOverlayPosted("ws-send");
+  const send = lastSidebarPosted("ws-send");
   if (!send) return undefined;
   return JSON.parse(d(send).data as string) as Record<string, unknown>;
 }
 
 /** Send a server message to the plugin. */
 function serverSend(msg: Record<string, unknown>) {
-  overlaySend("ws-message", { data: JSON.stringify(msg) });
+  sidebarSend("ws-message", { data: JSON.stringify(msg) });
 }
 
 /** Simulate the full create-room flow through to auth-ok. */
 function doCreateRoom() {
   sidebarSend("create-room");
 
-  overlaySend("http-response", {
+  sidebarSend("sb-fetch-response", {
     ok: true,
     status: 200,
     body: {
       roomCode: "ABC123",
-      secret: "testsecret",
       wsUrl: "wss://watchparty.example.com/ws/ABC123",
-      invite: "ABC123:testsecret",
     },
   });
 
-  overlaySend("ws-open");
+  sidebarSend("ws-open");
 
-  overlaySend("ws-message", {
+  sidebarSend("ws-message", {
     data: JSON.stringify({
       type: "auth-ok",
       role: "host",
@@ -206,12 +208,12 @@ function doCreateRoom() {
 }
 
 /** Simulate the full join-room flow through to auth-ok. */
-function doJoinRoom(invite = "ABCDEF:dGVzdHNlY3JldA") {
-  sidebarSend("join-room", { invite });
+function doJoinRoom(roomCode = "ABCDEF") {
+  sidebarSend("join-room", { invite: roomCode });
 
-  overlaySend("ws-open");
+  sidebarSend("ws-open");
 
-  overlaySend("ws-message", {
+  sidebarSend("ws-message", {
     data: JSON.stringify({
       type: "auth-ok",
       role: "guest",
@@ -236,23 +238,23 @@ describe("main connection state", () => {
       expect(sidebarHandlers["join-room"]).toBeDefined();
       expect(sidebarHandlers["leave-room"]).toBeDefined();
       expect(sidebarHandlers["copy-invite"]).toBeDefined();
+      expect(sidebarHandlers["sb-fetch-response"]).toBeDefined();
     });
 
     test("registers overlay message handlers", () => {
-      expect(overlayHandlers["http-response"]).toBeDefined();
-      expect(overlayHandlers["ws-open"]).toBeDefined();
-      expect(overlayHandlers["ws-message"]).toBeDefined();
-      expect(overlayHandlers["ws-closed"]).toBeDefined();
-      expect(overlayHandlers["ws-error"]).toBeDefined();
-      expect(overlayHandlers["ws-reconnecting"]).toBeDefined();
+      expect(sidebarHandlers["ws-open"]).toBeDefined();
+      expect(sidebarHandlers["ws-message"]).toBeDefined();
+      expect(sidebarHandlers["ws-closed"]).toBeDefined();
+      expect(sidebarHandlers["ws-error"]).toBeDefined();
+      expect(sidebarHandlers["ws-reconnecting"]).toBeDefined();
     });
   });
 
   describe("create-room flow", () => {
-    test("sends http-fetch to overlay on create-room", () => {
+    test("sends sb-fetch to sidebar on create-room", () => {
       sidebarSend("create-room");
 
-      const fetch = lastOverlayPosted("http-fetch");
+      const fetch = lastSidebarPosted("sb-fetch");
       expect(fetch).toBeDefined();
       expect(d(fetch).url).toContain("/api/rooms");
       expect(d(fetch).method).toBe("POST");
@@ -262,7 +264,7 @@ describe("main connection state", () => {
       prefsStore.backendUrl = "https://custom-backend.example.com";
       sidebarSend("create-room");
 
-      const fetch = lastOverlayPosted("http-fetch");
+      const fetch = lastSidebarPosted("sb-fetch");
       expect(d(fetch).url).toBe("https://custom-backend.example.com/api/rooms");
     });
 
@@ -273,7 +275,7 @@ describe("main connection state", () => {
       const err = lastSidebarPosted("sb-error");
       expect(err).toBeDefined();
       expect(d(err).text).toContain("Backend URL");
-      expect(findOverlayPosted("http-fetch")).toEqual([]);
+      expect(findSidebarPosted("sb-fetch")).toEqual([]);
     });
 
     test("shows error when no file is loaded", () => {
@@ -283,7 +285,7 @@ describe("main connection state", () => {
       const err = lastSidebarPosted("sb-error");
       expect(err).toBeDefined();
       expect(d(err).text).toContain("video file");
-      expect(findOverlayPosted("http-fetch")).toEqual([]);
+      expect(findSidebarPosted("sb-fetch")).toEqual([]);
     });
 
     test("shows OSD when no file is loaded", () => {
@@ -300,39 +302,37 @@ describe("main connection state", () => {
       expect(state.some((m) => d(m).view === "connecting")).toBe(true);
     });
 
-    test("connects WebSocket after successful http-response", () => {
+    test("connects WebSocket after successful sb-fetch-response", () => {
       sidebarSend("create-room");
 
-      overlaySend("http-response", {
+      sidebarSend("sb-fetch-response", {
         ok: true,
         status: 200,
         body: {
           roomCode: "ABC123",
-          secret: "testsecret",
           wsUrl: "wss://watchparty.example.com/ws/ABC123",
-          invite: "ABC123:testsecret",
         },
       });
 
-      const connect = lastOverlayPosted("ws-connect");
+      const connect = lastSidebarPosted("ws-connect");
       expect(connect).toBeDefined();
       expect(d(connect).url).toBe("wss://watchparty.example.com/ws/ABC123");
     });
 
-    test("shows error on http-response failure", () => {
+    test("shows error on sb-fetch-response failure", () => {
       sidebarSend("create-room");
 
-      overlaySend("http-response", { ok: false, error: "Network error" });
+      sidebarSend("sb-fetch-response", { ok: false, error: "Network error" });
 
       const err = lastSidebarPosted("sb-error");
       expect(err).toBeDefined();
       expect(d(err).text).toContain("Network error");
     });
 
-    test("shows OSD on http-response failure", () => {
+    test("shows OSD on sb-fetch-response failure", () => {
       sidebarSend("create-room");
 
-      overlaySend("http-response", { ok: false, error: "Network error" });
+      sidebarSend("sb-fetch-response", { ok: false, error: "Network error" });
 
       expect(osdMessages.some((m) => m.includes("Failed"))).toBe(true);
     });
@@ -340,7 +340,7 @@ describe("main connection state", () => {
     test("shows error on invalid server response", () => {
       sidebarSend("create-room");
 
-      overlaySend("http-response", {
+      sidebarSend("sb-fetch-response", {
         ok: true,
         status: 200,
         body: { roomCode: "ABC123" },
@@ -354,24 +354,21 @@ describe("main connection state", () => {
     test("sends auth message with file metadata and display name on ws-open", () => {
       sidebarSend("create-room");
 
-      overlaySend("http-response", {
+      sidebarSend("sb-fetch-response", {
         ok: true,
         status: 200,
         body: {
           roomCode: "ABC123",
-          secret: "testsecret",
           wsUrl: "wss://watchparty.example.com/ws/ABC123",
-          invite: "ABC123:testsecret",
         },
       });
 
-      overlaySend("ws-open");
+      sidebarSend("ws-open");
 
-      const send = lastOverlayPosted("ws-send");
+      const send = lastSidebarPosted("ws-send");
       expect(send).toBeDefined();
       const msg = JSON.parse(d(send).data as string) as Record<string, unknown>;
       expect(msg.type).toBe("auth");
-      expect(msg.secret).toBe("testsecret");
       expect(msg.desiredRole).toBe("host");
       expect(msg.displayName).toBe("TestUser");
       expect(msg.protocolVersion).toBe(1);
@@ -388,20 +385,18 @@ describe("main connection state", () => {
       prefsStore.displayName = "";
       sidebarSend("create-room");
 
-      overlaySend("http-response", {
+      sidebarSend("sb-fetch-response", {
         ok: true,
         status: 200,
         body: {
           roomCode: "ABC123",
-          secret: "testsecret",
           wsUrl: "wss://watchparty.example.com/ws/ABC123",
-          invite: "ABC123:testsecret",
         },
       });
 
-      overlaySend("ws-open");
+      sidebarSend("ws-open");
 
-      const send = lastOverlayPosted("ws-send");
+      const send = lastSidebarPosted("ws-send");
       const msg = JSON.parse(d(send).data as string) as Record<string, unknown>;
       expect(msg.displayName).toBe("Anonymous");
     });
@@ -415,7 +410,6 @@ describe("main connection state", () => {
       const room = lastSidebarPosted("sb-room");
       expect(room).toBeDefined();
       expect(d(room).code).toBe("ABC123");
-      expect(d(room).invite).toBe("ABC123:testsecret");
     });
 
     test("shows OSD on successful connection", () => {
@@ -427,56 +421,57 @@ describe("main connection state", () => {
     test("ignores create-room when not idle", () => {
       sidebarSend("create-room");
       overlayPosted = [];
+      sidebarPosted = [];
+      sidebarPosted = [];
 
       sidebarSend("create-room");
 
-      expect(findOverlayPosted("http-fetch")).toEqual([]);
+      expect(findSidebarPosted("sb-fetch")).toEqual([]);
     });
   });
 
   describe("join-room flow", () => {
     test("sends ws-connect on valid invite", () => {
-      sidebarSend("join-room", { invite: "ABCDEF:dGVzdHNlY3JldA" });
+      sidebarSend("join-room", { invite: "ABCDEF" });
 
-      const connect = lastOverlayPosted("ws-connect");
+      const connect = lastSidebarPosted("ws-connect");
       expect(connect).toBeDefined();
       expect(d(connect).url).toContain("/ws/ABCDEF");
     });
 
     test("uses backend URL from preferences for WebSocket URL", () => {
       prefsStore.backendUrl = "https://custom.example.com";
-      sidebarSend("join-room", { invite: "ABCDEF:dGVzdHNlY3JldA" });
+      sidebarSend("join-room", { invite: "ABCDEF" });
 
-      const connect = lastOverlayPosted("ws-connect");
+      const connect = lastSidebarPosted("ws-connect");
       expect(d(connect).url).toBe("wss://custom.example.com/ws/ABCDEF");
     });
 
     test("shows error when backend URL is not configured", () => {
       prefsStore.backendUrl = "";
-      sidebarSend("join-room", { invite: "ABCDEF:dGVzdHNlY3JldA" });
+      sidebarSend("join-room", { invite: "ABCDEF" });
 
       const err = lastSidebarPosted("sb-error");
       expect(err).toBeDefined();
       expect(d(err).text).toContain("Backend URL");
-      expect(findOverlayPosted("ws-connect")).toEqual([]);
+      expect(findSidebarPosted("ws-connect")).toEqual([]);
     });
 
     test("shows connecting view on join-room", () => {
-      sidebarSend("join-room", { invite: "ABCDEF:dGVzdHNlY3JldA" });
+      sidebarSend("join-room", { invite: "ABCDEF" });
 
       const state = findSidebarPosted("sb-state");
       expect(state.some((m) => d(m).view === "connecting")).toBe(true);
     });
 
     test("sends auth with guest role and file metadata on ws-open", () => {
-      sidebarSend("join-room", { invite: "ABCDEF:dGVzdHNlY3JldA" });
-      overlaySend("ws-open");
+      sidebarSend("join-room", { invite: "ABCDEF" });
+      sidebarSend("ws-open");
 
-      const send = lastOverlayPosted("ws-send");
+      const send = lastSidebarPosted("ws-send");
       expect(send).toBeDefined();
       const msg = JSON.parse(d(send).data as string) as Record<string, unknown>;
       expect(msg.type).toBe("auth");
-      expect(msg.secret).toBe("dGVzdHNlY3JldA");
       expect(msg.desiredRole).toBe("guest");
       expect(msg.displayName).toBe("TestUser");
 
@@ -497,17 +492,17 @@ describe("main connection state", () => {
 
     test("shows error when no file is loaded", () => {
       coreStatus.idle = true;
-      sidebarSend("join-room", { invite: "ABCDEF:dGVzdHNlY3JldA" });
+      sidebarSend("join-room", { invite: "ABCDEF" });
 
       const err = lastSidebarPosted("sb-error");
       expect(err).toBeDefined();
       expect(d(err).text).toContain("video file");
-      expect(findOverlayPosted("ws-connect")).toEqual([]);
+      expect(findSidebarPosted("ws-connect")).toEqual([]);
     });
 
     test("shows OSD when no file is loaded", () => {
       coreStatus.idle = true;
-      sidebarSend("join-room", { invite: "ABCDEF:dGVzdHNlY3JldA" });
+      sidebarSend("join-room", { invite: "ABCDEF" });
 
       expect(osdMessages.some((m) => m.includes("file"))).toBe(true);
     });
@@ -527,55 +522,56 @@ describe("main connection state", () => {
       expect(err).toBeDefined();
     });
 
-    test("shows error on invalid invite format", () => {
+    test("shows error on invalid room code format", () => {
       sidebarSend("join-room", { invite: "nocolon" });
 
       const err = lastSidebarPosted("sb-error");
       expect(err).toBeDefined();
     });
 
-    test("shows OSD on invalid invite", () => {
+    test("shows OSD on invalid room code", () => {
       sidebarSend("join-room", { invite: "nocolon" });
 
       expect(osdMessages.some((m) => m.includes("Invalid invite"))).toBe(true);
     });
 
-    test("guest does not show invite in sb-room", () => {
+    test("guest sb-room contains room code", () => {
       doJoinRoom();
 
       const room = lastSidebarPosted("sb-room");
       expect(room).toBeDefined();
-      expect(d(room).invite).toBe("");
+      expect(d(room).code).toBe("ABCDEF");
     });
 
     test("ignores join-room when not idle", () => {
-      sidebarSend("join-room", { invite: "ABCDEF:dGVzdHNlY3JldA" });
+      sidebarSend("join-room", { invite: "ABCDEF" });
       overlayPosted = [];
+      sidebarPosted = [];
 
-      sidebarSend("join-room", { invite: "GHJKMN:other" });
+      sidebarSend("join-room", { invite: "GHJKMN" });
 
-      expect(findOverlayPosted("ws-connect")).toEqual([]);
+      expect(findSidebarPosted("ws-connect")).toEqual([]);
     });
   });
 
   describe("auth-error", () => {
     test("shows error and disconnects on auth-error", () => {
-      sidebarSend("join-room", { invite: "ABCDEF:dGVzdHNlY3JldA" });
-      overlaySend("ws-open");
+      sidebarSend("join-room", { invite: "ABCDEF" });
+      sidebarSend("ws-open");
 
-      overlaySend("ws-message", {
+      sidebarSend("ws-message", {
         data: JSON.stringify({
           type: "auth-error",
-          code: "bad-secret",
-          message: "Invalid secret",
+          code: "auth-failed",
+          message: "Authentication failed",
         }),
       });
 
       const err = lastSidebarPosted("sb-error");
       expect(err).toBeDefined();
-      expect(d(err).text).toBe("Invalid secret");
+      expect(d(err).text).toBe("Authentication failed");
 
-      const disconnect = lastOverlayPosted("ws-disconnect");
+      const disconnect = lastSidebarPosted("ws-disconnect");
       expect(disconnect).toBeDefined();
     });
   });
@@ -584,16 +580,17 @@ describe("main connection state", () => {
     test("sends goodbye and disconnects when connected", () => {
       doCreateRoom();
       overlayPosted = [];
+      sidebarPosted = [];
 
       sidebarSend("leave-room");
 
-      const send = lastOverlayPosted("ws-send");
+      const send = lastSidebarPosted("ws-send");
       expect(send).toBeDefined();
       const msg = JSON.parse(d(send).data as string) as Record<string, unknown>;
       expect(msg.type).toBe("goodbye");
       expect(msg.reason).toBe("user-leave");
 
-      const disconnect = lastOverlayPosted("ws-disconnect");
+      const disconnect = lastSidebarPosted("ws-disconnect");
       expect(disconnect).toBeDefined();
 
       const state = lastSidebarPosted("sb-state");
@@ -601,14 +598,15 @@ describe("main connection state", () => {
     });
 
     test("disconnects without goodbye when not connected", () => {
-      sidebarSend("join-room", { invite: "ABCDEF:dGVzdHNlY3JldA" });
+      sidebarSend("join-room", { invite: "ABCDEF" });
       overlayPosted = [];
+      sidebarPosted = [];
 
       sidebarSend("leave-room");
 
-      const disconnect = lastOverlayPosted("ws-disconnect");
+      const disconnect = lastSidebarPosted("ws-disconnect");
       expect(disconnect).toBeDefined();
-      expect(findOverlayPosted("ws-send")).toEqual([]);
+      expect(findSidebarPosted("ws-send")).toEqual([]);
     });
 
     test("shows OSD on leave", () => {
@@ -667,10 +665,11 @@ describe("main connection state", () => {
     test("does not disconnect self on peer goodbye", () => {
       doCreateRoom();
       overlayPosted = [];
+      sidebarPosted = [];
 
       serverSend({ type: "goodbye", reason: "user-leave" });
 
-      expect(findOverlayPosted("ws-disconnect")).toEqual([]);
+      expect(findSidebarPosted("ws-disconnect")).toEqual([]);
     });
   });
 
@@ -679,7 +678,7 @@ describe("main connection state", () => {
       doCreateRoom();
       sidebarPosted = [];
 
-      overlaySend("ws-message", {
+      sidebarSend("ws-message", {
         data: JSON.stringify({ type: "presence", event: "peer-joined", role: "guest" }),
       });
 
@@ -692,7 +691,7 @@ describe("main connection state", () => {
       doCreateRoom();
       sidebarPosted = [];
 
-      overlaySend("ws-message", {
+      sidebarSend("ws-message", {
         data: JSON.stringify({ type: "presence", event: "peer-left", role: "guest" }),
       });
 
@@ -705,7 +704,7 @@ describe("main connection state", () => {
       doCreateRoom();
       osdMessages = [];
 
-      overlaySend("ws-message", {
+      sidebarSend("ws-message", {
         data: JSON.stringify({ type: "presence", event: "peer-left", role: "guest" }),
       });
 
@@ -716,7 +715,7 @@ describe("main connection state", () => {
       doCreateRoom();
       sidebarPosted = [];
 
-      overlaySend("ws-message", {
+      sidebarSend("ws-message", {
         data: JSON.stringify({ type: "presence", event: "peer-replaced", role: "guest" }),
       });
 
@@ -730,6 +729,7 @@ describe("main connection state", () => {
     test("host sends state snapshot on peer-joined", () => {
       doCreateRoom();
       overlayPosted = [];
+      sidebarPosted = [];
       coreStatus.position = 120.5;
       coreStatus.paused = false;
       coreStatus.speed = 1.25;
@@ -748,6 +748,7 @@ describe("main connection state", () => {
     test("host sends state snapshot on peer-replaced", () => {
       doCreateRoom();
       overlayPosted = [];
+      sidebarPosted = [];
       coreStatus.position = 60.0;
       coreStatus.paused = true;
       coreStatus.speed = 1.0;
@@ -766,20 +767,22 @@ describe("main connection state", () => {
     test("host does not send state snapshot on peer-left", () => {
       doCreateRoom();
       overlayPosted = [];
+      sidebarPosted = [];
 
       serverSend({ type: "presence", event: "peer-left", role: "guest" });
 
-      expect(findOverlayPosted("ws-send")).toEqual([]);
+      expect(findSidebarPosted("ws-send")).toEqual([]);
     });
 
     test("guest does not send state snapshot on peer-joined", () => {
       doJoinRoom();
       overlayPosted = [];
+      sidebarPosted = [];
 
       serverSend({ type: "presence", event: "peer-joined", role: "host" });
 
       // Guest should not send a state message
-      const sends = findOverlayPosted("ws-send");
+      const sends = findSidebarPosted("ws-send");
       const stateMsg = sends.find((s) => {
         const parsed = JSON.parse(d(s).data as string) as Record<string, unknown>;
         return parsed.type === "state";
@@ -791,25 +794,24 @@ describe("main connection state", () => {
       // Simulate host reconnecting when guest is already present
       sidebarSend("create-room");
 
-      overlaySend("http-response", {
+      sidebarSend("sb-fetch-response", {
         ok: true,
         status: 200,
         body: {
           roomCode: "ABC123",
-          secret: "testsecret",
           wsUrl: "wss://watchparty.example.com/ws/ABC123",
-          invite: "ABC123:testsecret",
         },
       });
 
-      overlaySend("ws-open");
+      sidebarSend("ws-open");
 
       coreStatus.position = 90.0;
       coreStatus.paused = false;
       coreStatus.speed = 1.5;
       overlayPosted = [];
+      sidebarPosted = [];
 
-      overlaySend("ws-message", {
+      sidebarSend("ws-message", {
         data: JSON.stringify({
           type: "auth-ok",
           role: "host",
@@ -819,7 +821,7 @@ describe("main connection state", () => {
         }),
       });
 
-      const sends = findOverlayPosted("ws-send");
+      const sends = findSidebarPosted("ws-send");
       const stateMsg = sends.find((s) => {
         const parsed = JSON.parse(d(s).data as string) as Record<string, unknown>;
         return parsed.type === "state";
@@ -835,10 +837,11 @@ describe("main connection state", () => {
     test("host does not send state on auth-ok without peer", () => {
       doCreateRoom(); // peerPresent is false in doCreateRoom
       overlayPosted = [];
+      sidebarPosted = [];
 
       // No state message should have been sent during auth-ok
       // (doCreateRoom already completed, check there were no state sends)
-      const sends = findOverlayPosted("ws-send");
+      const sends = findSidebarPosted("ws-send");
       const stateMsg = sends.find((s) => {
         const parsed = JSON.parse(d(s).data as string) as Record<string, unknown>;
         return parsed.type === "state";
@@ -849,6 +852,7 @@ describe("main connection state", () => {
     test("state snapshot includes protocol envelope fields", () => {
       doCreateRoom();
       overlayPosted = [];
+      sidebarPosted = [];
 
       serverSend({ type: "presence", event: "peer-joined", role: "guest" });
 
@@ -866,7 +870,7 @@ describe("main connection state", () => {
       doCreateRoom();
       sidebarPosted = [];
 
-      overlaySend("ws-message", {
+      sidebarSend("ws-message", {
         data: JSON.stringify({
           type: "warning",
           code: "file-mismatch",
@@ -885,7 +889,7 @@ describe("main connection state", () => {
       doCreateRoom();
       sidebarPosted = [];
 
-      overlaySend("ws-message", {
+      sidebarSend("ws-message", {
         data: JSON.stringify({
           type: "error",
           code: "room-expired",
@@ -904,7 +908,7 @@ describe("main connection state", () => {
       doCreateRoom();
       sidebarPosted = [];
 
-      overlaySend("ws-closed", { code: 1006, reason: "" });
+      sidebarSend("ws-closed", { code: 1006, reason: "" });
 
       const status = lastSidebarPosted("sb-status");
       expect(status).toBeDefined();
@@ -915,19 +919,17 @@ describe("main connection state", () => {
       sidebarSend("create-room");
       sidebarPosted = [];
 
-      overlaySend("http-response", {
+      sidebarSend("sb-fetch-response", {
         ok: true,
         status: 200,
         body: {
           roomCode: "ABC123",
-          secret: "testsecret",
           wsUrl: "wss://watchparty.example.com/ws/ABC123",
-          invite: "ABC123:testsecret",
         },
       });
 
       sidebarPosted = [];
-      overlaySend("ws-closed", { code: 1006, reason: "" });
+      sidebarSend("ws-closed", { code: 1006, reason: "" });
 
       const err = lastSidebarPosted("sb-error");
       expect(err).toBeDefined();
@@ -937,21 +939,19 @@ describe("main connection state", () => {
     test("resets to idle on ws-closed while authenticating", () => {
       sidebarSend("create-room");
 
-      overlaySend("http-response", {
+      sidebarSend("sb-fetch-response", {
         ok: true,
         status: 200,
         body: {
           roomCode: "ABC123",
-          secret: "testsecret",
           wsUrl: "wss://watchparty.example.com/ws/ABC123",
-          invite: "ABC123:testsecret",
         },
       });
 
-      overlaySend("ws-open");
+      sidebarSend("ws-open");
       sidebarPosted = [];
 
-      overlaySend("ws-closed", { code: 1006, reason: "" });
+      sidebarSend("ws-closed", { code: 1006, reason: "" });
 
       const err = lastSidebarPosted("sb-error");
       expect(err).toBeDefined();
@@ -965,7 +965,7 @@ describe("main connection state", () => {
       doCreateRoom();
       sidebarPosted = [];
 
-      overlaySend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
+      sidebarSend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
 
       const state = lastSidebarPosted("sb-state");
       expect(state).toBeDefined();
@@ -979,34 +979,35 @@ describe("main connection state", () => {
     test("re-authenticates on reconnection ws-open", () => {
       doCreateRoom();
       overlayPosted = [];
+      sidebarPosted = [];
 
-      overlaySend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
-      overlaySend("ws-open");
+      sidebarSend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
+      sidebarSend("ws-open");
 
-      const send = lastOverlayPosted("ws-send");
+      const send = lastSidebarPosted("ws-send");
       expect(send).toBeDefined();
       const msg = JSON.parse(d(send).data as string) as Record<string, unknown>;
       expect(msg.type).toBe("auth");
-      expect(msg.secret).toBe("testsecret");
+
     });
 
     test("ignores ws-open when no room context", () => {
-      overlaySend("ws-open");
+      sidebarSend("ws-open");
 
-      expect(findOverlayPosted("ws-send")).toEqual([]);
+      expect(findSidebarPosted("ws-send")).toEqual([]);
     });
 
     test("ignores invalid JSON in ws-message", () => {
       doCreateRoom();
       sidebarPosted = [];
 
-      overlaySend("ws-message", { data: "not json{" });
+      sidebarSend("ws-message", { data: "not json{" });
       expect(findSidebarPosted("sb-error")).toEqual([]);
     });
 
     test("ignores ws-message with missing data", () => {
-      overlaySend("ws-message", {});
-      overlaySend("ws-message", null);
+      sidebarSend("ws-message", {});
+      sidebarSend("ws-message", null);
     });
   });
 
@@ -1019,7 +1020,7 @@ describe("main connection state", () => {
 
       const copy = lastSidebarPosted("sb-copy-text");
       expect(copy).toBeDefined();
-      expect(d(copy).text).toBe("ABC123:testsecret");
+      expect(d(copy).text).toBe("ABC123");
     });
 
     test("shows OSD on copy-invite", () => {
@@ -1039,19 +1040,19 @@ describe("main connection state", () => {
   });
 
   describe("IINA event registration", () => {
-    test("registers iina.pause event handler", () => {
-      expect(eventHandlers["iina.pause"]).toBeDefined();
-      expect(eventHandlers["iina.pause"].length).toBeGreaterThan(0);
+    test("registers mpv.pause.changed event handler", () => {
+      expect(eventHandlers["mpv.pause.changed"]).toBeDefined();
+      expect(eventHandlers["mpv.pause.changed"].length).toBeGreaterThan(0);
     });
 
-    test("registers iina.seek event handler", () => {
-      expect(eventHandlers["iina.seek"]).toBeDefined();
-      expect(eventHandlers["iina.seek"].length).toBeGreaterThan(0);
+    test("registers mpv.seek event handler", () => {
+      expect(eventHandlers["mpv.seek"]).toBeDefined();
+      expect(eventHandlers["mpv.seek"].length).toBeGreaterThan(0);
     });
 
-    test("registers iina.speed event handler", () => {
-      expect(eventHandlers["iina.speed"]).toBeDefined();
-      expect(eventHandlers["iina.speed"].length).toBeGreaterThan(0);
+    test("registers mpv.speed.changed event handler", () => {
+      expect(eventHandlers["mpv.speed.changed"]).toBeDefined();
+      expect(eventHandlers["mpv.speed.changed"].length).toBeGreaterThan(0);
     });
   });
 
@@ -1059,12 +1060,13 @@ describe("main connection state", () => {
     beforeEach(() => {
       doCreateRoom();
       overlayPosted = [];
+      sidebarPosted = [];
     });
 
     test("local pause sends pause message", () => {
       coreStatus.paused = true;
       coreStatus.position = 100.5;
-      fireEvent("iina.pause");
+      fireEvent("mpv.pause.changed");
 
       const msg = lastSentProtocol();
       expect(msg).toBeDefined();
@@ -1075,7 +1077,7 @@ describe("main connection state", () => {
     test("local resume sends play message", () => {
       coreStatus.paused = false;
       coreStatus.position = 50.0;
-      fireEvent("iina.pause");
+      fireEvent("mpv.pause.changed");
 
       const msg = lastSentProtocol();
       expect(msg).toBeDefined();
@@ -1085,7 +1087,7 @@ describe("main connection state", () => {
 
     test("local seek sends seek message", () => {
       coreStatus.position = 200.0;
-      fireEvent("iina.seek");
+      fireEvent("mpv.seek");
 
       const msg = lastSentProtocol();
       expect(msg).toBeDefined();
@@ -1096,7 +1098,7 @@ describe("main connection state", () => {
 
     test("local speed change sends speed message", () => {
       coreStatus.speed = 2.0;
-      fireEvent("iina.speed");
+      fireEvent("mpv.speed.changed");
 
       const msg = lastSentProtocol();
       expect(msg).toBeDefined();
@@ -1107,11 +1109,12 @@ describe("main connection state", () => {
     test("local events are ignored when not connected", () => {
       sidebarSend("leave-room");
       overlayPosted = [];
+      sidebarPosted = [];
 
       coreStatus.paused = true;
-      fireEvent("iina.pause");
+      fireEvent("mpv.pause.changed");
 
-      expect(findOverlayPosted("ws-send")).toEqual([]);
+      expect(findSidebarPosted("ws-send")).toEqual([]);
     });
   });
 
@@ -1119,12 +1122,13 @@ describe("main connection state", () => {
     beforeEach(() => {
       doJoinRoom();
       overlayPosted = [];
+      sidebarPosted = [];
     });
 
     test("guest local pause sends pause message", () => {
       coreStatus.paused = true;
       coreStatus.position = 75.0;
-      fireEvent("iina.pause");
+      fireEvent("mpv.pause.changed");
 
       const msg = lastSentProtocol();
       expect(msg).toBeDefined();
@@ -1134,7 +1138,7 @@ describe("main connection state", () => {
 
     test("guest local seek sends seek message", () => {
       coreStatus.position = 300.0;
-      fireEvent("iina.seek");
+      fireEvent("mpv.seek");
 
       const msg = lastSentProtocol();
       expect(msg).toBeDefined();
@@ -1147,6 +1151,7 @@ describe("main connection state", () => {
     beforeEach(() => {
       doJoinRoom();
       overlayPosted = [];
+      sidebarPosted = [];
       coreCalls = [];
     });
 
@@ -1217,51 +1222,56 @@ describe("main connection state", () => {
     beforeEach(() => {
       doJoinRoom();
       overlayPosted = [];
+      sidebarPosted = [];
       coreCalls = [];
     });
 
     test("remote pause suppresses subsequent local pause event", () => {
       serverSend({ type: "pause", positionMs: 45000 });
       overlayPosted = [];
+      sidebarPosted = [];
 
       // Simulate the player's pause event firing as a result
       coreStatus.paused = true;
       coreStatus.position = 45.0;
-      fireEvent("iina.pause");
+      fireEvent("mpv.pause.changed");
 
       // Should not send a pause message back (suppressed)
-      expect(findOverlayPosted("ws-send")).toEqual([]);
+      expect(findSidebarPosted("ws-send")).toEqual([]);
     });
 
     test("remote play suppresses subsequent local play event", () => {
       serverSend({ type: "play", positionMs: 60000 });
       overlayPosted = [];
+      sidebarPosted = [];
 
       coreStatus.paused = false;
       coreStatus.position = 60.0;
-      fireEvent("iina.pause");
+      fireEvent("mpv.pause.changed");
 
-      expect(findOverlayPosted("ws-send")).toEqual([]);
+      expect(findSidebarPosted("ws-send")).toEqual([]);
     });
 
     test("remote seek suppresses subsequent local seek event", () => {
       serverSend({ type: "seek", positionMs: 120000, cause: "user" });
       overlayPosted = [];
+      sidebarPosted = [];
 
       coreStatus.position = 120.0;
-      fireEvent("iina.seek");
+      fireEvent("mpv.seek");
 
-      expect(findOverlayPosted("ws-send")).toEqual([]);
+      expect(findSidebarPosted("ws-send")).toEqual([]);
     });
 
     test("remote speed suppresses subsequent local speed event", () => {
       serverSend({ type: "speed", speed: 2.0 });
       overlayPosted = [];
+      sidebarPosted = [];
 
       coreStatus.speed = 2.0;
-      fireEvent("iina.speed");
+      fireEvent("mpv.speed.changed");
 
-      expect(findOverlayPosted("ws-send")).toEqual([]);
+      expect(findSidebarPosted("ws-send")).toEqual([]);
     });
 
     test("unsuppressed local event after remote still sends", () => {
@@ -1270,13 +1280,14 @@ describe("main connection state", () => {
       // First local pause is suppressed
       coreStatus.paused = true;
       coreStatus.position = 45.0;
-      fireEvent("iina.pause");
+      fireEvent("mpv.pause.changed");
       overlayPosted = [];
+      sidebarPosted = [];
 
       // Second local play should NOT be suppressed
       coreStatus.paused = false;
       coreStatus.position = 46.0;
-      fireEvent("iina.pause");
+      fireEvent("mpv.pause.changed");
 
       const msg = lastSentProtocol();
       expect(msg).toBeDefined();
@@ -1288,6 +1299,7 @@ describe("main connection state", () => {
     test("heartbeat timer starts on auth-ok", () => {
       doCreateRoom();
       overlayPosted = [];
+      sidebarPosted = [];
 
       // Advance the interval to trigger a heartbeat
       // Use a short wait and check — heartbeats are on 5s interval
@@ -1301,10 +1313,11 @@ describe("main connection state", () => {
 
       // After disconnect, local events should be ignored
       overlayPosted = [];
+      sidebarPosted = [];
       coreStatus.paused = true;
-      fireEvent("iina.pause");
+      fireEvent("mpv.pause.changed");
 
-      expect(findOverlayPosted("ws-send")).toEqual([]);
+      expect(findSidebarPosted("ws-send")).toEqual([]);
     });
 
     test("sync engine is re-created on reconnect", () => {
@@ -1314,11 +1327,12 @@ describe("main connection state", () => {
       // Reconnect
       doJoinRoom();
       overlayPosted = [];
+      sidebarPosted = [];
 
       // Local events should work again
       coreStatus.paused = true;
       coreStatus.position = 10.0;
-      fireEvent("iina.pause");
+      fireEvent("mpv.pause.changed");
 
       const msg = lastSentProtocol();
       expect(msg).toBeDefined();
@@ -1332,6 +1346,7 @@ describe("main connection state", () => {
       // Unpause the sync engine by receiving a remote play
       serverSend({ type: "play", positionMs: 10000 });
       overlayPosted = [];
+      sidebarPosted = [];
       coreCalls = [];
     });
 
@@ -1376,6 +1391,7 @@ describe("main connection state", () => {
     beforeEach(() => {
       doCreateRoom();
       overlayPosted = [];
+      sidebarPosted = [];
       coreCalls = [];
     });
 
@@ -1397,10 +1413,11 @@ describe("main connection state", () => {
     test("play message includes full envelope", () => {
       doCreateRoom();
       overlayPosted = [];
+      sidebarPosted = [];
 
       coreStatus.paused = false;
       coreStatus.position = 25.0;
-      fireEvent("iina.pause");
+      fireEvent("mpv.pause.changed");
 
       const msg = lastSentProtocol();
       expect(msg).toBeDefined();
@@ -1416,7 +1433,7 @@ describe("main connection state", () => {
       doCreateRoom();
       sidebarPosted = [];
 
-      overlaySend("ws-closed", { code: 1006, reason: "" });
+      sidebarSend("ws-closed", { code: 1006, reason: "" });
 
       const status = lastSidebarPosted("sb-status");
       expect(status).toBeDefined();
@@ -1431,8 +1448,8 @@ describe("main connection state", () => {
       doCreateRoom();
       sidebarPosted = [];
 
-      overlaySend("ws-closed", { code: 1006, reason: "" });
-      overlaySend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
+      sidebarSend("ws-closed", { code: 1006, reason: "" });
+      sidebarSend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
 
       const state = lastSidebarPosted("sb-state");
       expect(d(state).view).toBe("connecting");
@@ -1446,13 +1463,13 @@ describe("main connection state", () => {
       doCreateRoom();
 
       // Connection drops
-      overlaySend("ws-closed", { code: 1006, reason: "" });
-      overlaySend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
+      sidebarSend("ws-closed", { code: 1006, reason: "" });
+      sidebarSend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
 
       sidebarPosted = [];
 
       // Reconnect attempt fails (socket closes during connecting)
-      overlaySend("ws-closed", { code: 1006, reason: "" });
+      sidebarSend("ws-closed", { code: 1006, reason: "" });
 
       // Should NOT show "Connection failed" or reset to idle
       const errors = findSidebarPosted("sb-error");
@@ -1465,27 +1482,28 @@ describe("main connection state", () => {
     test("re-authenticates on successful reconnection", () => {
       doCreateRoom();
       overlayPosted = [];
+      sidebarPosted = [];
 
       // Connection drops and overlay reconnects
-      overlaySend("ws-closed", { code: 1006, reason: "" });
-      overlaySend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
-      overlaySend("ws-open");
+      sidebarSend("ws-closed", { code: 1006, reason: "" });
+      sidebarSend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
+      sidebarSend("ws-open");
 
       // Should send a new auth message
-      const send = lastOverlayPosted("ws-send");
+      const send = lastSidebarPosted("ws-send");
       expect(send).toBeDefined();
       const msg = JSON.parse(d(send).data as string) as Record<string, unknown>;
       expect(msg.type).toBe("auth");
-      expect(msg.secret).toBe("testsecret");
+
     });
 
     test("resumes connected state after successful reconnect + auth-ok", () => {
       doCreateRoom();
 
       // Connection drops and overlay reconnects
-      overlaySend("ws-closed", { code: 1006, reason: "" });
-      overlaySend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
-      overlaySend("ws-open");
+      sidebarSend("ws-closed", { code: 1006, reason: "" });
+      sidebarSend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
+      sidebarSend("ws-open");
 
       sidebarPosted = [];
 
@@ -1507,14 +1525,16 @@ describe("main connection state", () => {
     test("host sends state snapshot with reason reconnect after reconnecting with peer", () => {
       doCreateRoom();
       overlayPosted = [];
+      sidebarPosted = [];
 
       // Connection drops and overlay reconnects
-      overlaySend("ws-closed", { code: 1006, reason: "" });
-      overlaySend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
-      overlaySend("ws-open");
+      sidebarSend("ws-closed", { code: 1006, reason: "" });
+      sidebarSend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
+      sidebarSend("ws-open");
 
       // Clear the auth message
       overlayPosted = [];
+      sidebarPosted = [];
 
       serverSend({
         type: "auth-ok",
@@ -1524,7 +1544,7 @@ describe("main connection state", () => {
         expiresAtMs: Date.now() + 3600000,
       });
 
-      const send = lastOverlayPosted("ws-send");
+      const send = lastSidebarPosted("ws-send");
       expect(send).toBeDefined();
       const msg = JSON.parse(d(send).data as string) as Record<string, unknown>;
       expect(msg.type).toBe("state");
@@ -1536,9 +1556,9 @@ describe("main connection state", () => {
       sidebarPosted = [];
       osdMessages = [];
 
-      overlaySend("ws-closed", { code: 1006, reason: "" });
-      overlaySend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
-      overlaySend("ws-reconnect-failed", { attempts: 10 });
+      sidebarSend("ws-closed", { code: 1006, reason: "" });
+      sidebarSend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
+      sidebarSend("ws-reconnect-failed", { attempts: 10 });
 
       const state = lastSidebarPosted("sb-state");
       expect(d(state).view).toBe("error");
@@ -1553,21 +1573,22 @@ describe("main connection state", () => {
     test("can create a new room after reconnect failure", () => {
       doCreateRoom();
 
-      overlaySend("ws-closed", { code: 1006, reason: "" });
-      overlaySend("ws-reconnect-failed", { attempts: 10 });
+      sidebarSend("ws-closed", { code: 1006, reason: "" });
+      sidebarSend("ws-reconnect-failed", { attempts: 10 });
 
       // Should be back to idle, able to create again
       overlayPosted = [];
+      sidebarPosted = [];
       sidebarSend("create-room");
 
-      const fetch = lastOverlayPosted("http-fetch");
+      const fetch = lastSidebarPosted("sb-fetch");
       expect(fetch).toBeDefined();
     });
 
     test("initial connection failure still resets state when not reconnecting", () => {
-      sidebarSend("join-room", { invite: "ABCDEF:dGVzdHNlY3JldA" });
+      sidebarSend("join-room", { invite: "ABCDEF" });
 
-      overlaySend("ws-closed", { code: 1006, reason: "" });
+      sidebarSend("ws-closed", { code: 1006, reason: "" });
 
       const err = lastSidebarPosted("sb-error");
       expect(err).toBeDefined();
@@ -1578,18 +1599,19 @@ describe("main connection state", () => {
     });
 
     test("registers ws-reconnect-failed handler", () => {
-      expect(overlayHandlers["ws-reconnect-failed"]).toBeDefined();
+      expect(sidebarHandlers["ws-reconnect-failed"]).toBeDefined();
     });
 
     test("guest reconnection re-authenticates with guest role", () => {
       doJoinRoom();
       overlayPosted = [];
+      sidebarPosted = [];
 
-      overlaySend("ws-closed", { code: 1006, reason: "" });
-      overlaySend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
-      overlaySend("ws-open");
+      sidebarSend("ws-closed", { code: 1006, reason: "" });
+      sidebarSend("ws-reconnecting", { attempt: 1, delayMs: 1000 });
+      sidebarSend("ws-open");
 
-      const send = lastOverlayPosted("ws-send");
+      const send = lastSidebarPosted("ws-send");
       const msg = JSON.parse(d(send).data as string) as Record<string, unknown>;
       expect(msg.type).toBe("auth");
       expect(msg.desiredRole).toBe("guest");
@@ -1667,6 +1689,7 @@ describe("main connection state", () => {
     test("buffering pause is not sent to peer", () => {
       doCreateRoom();
       overlayPosted = [];
+      sidebarPosted = [];
 
       // Set buffering state
       mpvFlags["paused-for-cache"] = true;
@@ -1674,10 +1697,10 @@ describe("main connection state", () => {
 
       // Now simulate a pause event (triggered by buffering, not user)
       coreStatus.paused = true;
-      fireEvent("iina.pause");
+      fireEvent("mpv.pause.changed");
 
       // Should not have sent a pause message
-      const sends = findOverlayPosted("ws-send");
+      const sends = findSidebarPosted("ws-send");
       const pauseMsg = sends.find((s) => {
         const parsed = JSON.parse(d(s).data as string) as Record<string, unknown>;
         return parsed.type === "pause";
@@ -1693,12 +1716,13 @@ describe("main connection state", () => {
       fireEvent("mpv.paused-for-cache.changed");
 
       overlayPosted = [];
+      sidebarPosted = [];
 
       // Simulate resume (triggered by buffer fill, not user)
       coreStatus.paused = false;
-      fireEvent("iina.pause");
+      fireEvent("mpv.pause.changed");
 
-      const sends = findOverlayPosted("ws-send");
+      const sends = findSidebarPosted("ws-send");
       const playMsg = sends.find((s) => {
         const parsed = JSON.parse(d(s).data as string) as Record<string, unknown>;
         return parsed.type === "play";
@@ -1723,7 +1747,7 @@ describe("main connection state", () => {
       fireEvent("iina.file-loaded");
 
       // Should have disconnected
-      const disconnect = lastOverlayPosted("ws-disconnect");
+      const disconnect = lastSidebarPosted("ws-disconnect");
       expect(disconnect).toBeDefined();
 
       // Should show OSD message
@@ -1739,12 +1763,13 @@ describe("main connection state", () => {
       doCreateRoom();
 
       overlayPosted = [];
+      sidebarPosted = [];
 
       // Same file reloads
       fireEvent("iina.file-loaded");
 
       // Should not have disconnected
-      const disconnect = findOverlayPosted("ws-disconnect");
+      const disconnect = findSidebarPosted("ws-disconnect");
       expect(disconnect).toEqual([]);
     });
 
@@ -1756,7 +1781,7 @@ describe("main connection state", () => {
       fireEvent("iina.file-loaded");
 
       // No disconnect should happen
-      const disconnect = findOverlayPosted("ws-disconnect");
+      const disconnect = findSidebarPosted("ws-disconnect");
       expect(disconnect).toEqual([]);
     });
 
@@ -1772,7 +1797,7 @@ describe("main connection state", () => {
       fireEvent("iina.file-loaded");
 
       // No extra disconnect
-      const disconnects = findOverlayPosted("ws-disconnect");
+      const disconnects = findSidebarPosted("ws-disconnect");
       // One from leave-room, but the file-loaded should not trigger another
       // After leave, state is idle so file-loaded just records the new URL
       expect(disconnects.length).toBe(1);
@@ -1809,7 +1834,7 @@ describe("log levels", () => {
   test("create room failure emits ERROR", () => {
     sidebarSend("create-room");
     logMessages = [];
-    overlaySend("http-response", { ok: false, status: 500, error: "server down" });
+    sidebarSend("sb-fetch-response", { ok: false, status: 500, error: "server down" });
     expect(hasLog("ERROR", "Create room failed")).toBe(true);
   });
 
@@ -1820,20 +1845,18 @@ describe("log levels", () => {
 
   test("auth error emits ERROR", () => {
     sidebarSend("create-room");
-    overlaySend("http-response", {
+    sidebarSend("sb-fetch-response", {
       ok: true,
       status: 200,
       body: {
         roomCode: "ABC123",
-        secret: "testsecret",
         wsUrl: "wss://example.com/ws/ABC123",
-        invite: "ABC123:testsecret",
       },
     });
-    overlaySend("ws-open");
+    sidebarSend("ws-open");
     logMessages = [];
-    overlaySend("ws-message", {
-      data: JSON.stringify({ type: "auth-error", code: "invalid-secret", message: "bad secret" }),
+    sidebarSend("ws-message", {
+      data: JSON.stringify({ type: "auth-error", code: "auth-failed", message: "bad auth" }),
     });
     expect(hasLog("ERROR", "Auth error")).toBe(true);
   });
@@ -1841,7 +1864,7 @@ describe("log levels", () => {
   test("server error emits ERROR", () => {
     doCreateRoom();
     logMessages = [];
-    overlaySend("ws-message", {
+    sidebarSend("ws-message", {
       data: JSON.stringify({ type: "error", code: "room-expired", message: "Room has expired" }),
     });
     expect(hasLog("ERROR", "Server error")).toBe(true);
@@ -1850,7 +1873,7 @@ describe("log levels", () => {
   test("warning message emits WARN", () => {
     doCreateRoom();
     logMessages = [];
-    overlaySend("ws-message", {
+    sidebarSend("ws-message", {
       data: JSON.stringify({ type: "warning", code: "file-mismatch", message: "Files differ" }),
     });
     expect(hasLog("WARN", "file-mismatch")).toBe(true);
@@ -1859,35 +1882,35 @@ describe("log levels", () => {
   test("WebSocket close emits WARN", () => {
     doCreateRoom();
     logMessages = [];
-    overlaySend("ws-closed", { code: 1006, reason: "abnormal" });
+    sidebarSend("ws-closed", { code: 1006, reason: "abnormal" });
     expect(hasLog("WARN", "WebSocket closed")).toBe(true);
   });
 
   test("WebSocket error emits ERROR", () => {
     doCreateRoom();
     logMessages = [];
-    overlaySend("ws-error");
+    sidebarSend("ws-error");
     expect(hasLog("ERROR", "WebSocket error")).toBe(true);
   });
 
   test("reconnecting emits WARN", () => {
     doCreateRoom();
     logMessages = [];
-    overlaySend("ws-reconnecting", { attempt: 2, delayMs: 1000 });
+    sidebarSend("ws-reconnecting", { attempt: 2, delayMs: 1000 });
     expect(hasLog("WARN", "Reconnecting")).toBe(true);
   });
 
   test("reconnection failed emits ERROR", () => {
     doCreateRoom();
     logMessages = [];
-    overlaySend("ws-reconnect-failed", { attempts: 5 });
+    sidebarSend("ws-reconnect-failed", { attempts: 5 });
     expect(hasLog("ERROR", "Reconnection failed")).toBe(true);
   });
 
   test("unhandled message type emits WARN", () => {
     doCreateRoom();
     logMessages = [];
-    overlaySend("ws-message", {
+    sidebarSend("ws-message", {
       data: JSON.stringify({ type: "unknown-type" }),
     });
     expect(hasLog("WARN", "Unhandled message type")).toBe(true);
