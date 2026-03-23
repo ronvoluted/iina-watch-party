@@ -1,12 +1,12 @@
 {
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "target": "ESNext",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "strict": true,
-    "noEmit": true,
-    "skipLibCheck": true,
     "types": ["bun-types"]
   },
-  "include": ["tests/**/*.ts"]
+  "include": ["tests/**/*.ts"],
+  "references": [
+    { "path": "packages/shared" },
+    { "path": "packages/worker" },
+    { "path": "packages/plugin" }
+  ]
 }

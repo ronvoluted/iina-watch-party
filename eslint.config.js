@@ -5,6 +5,18 @@ export default [
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    ignores: ["node_modules/", ".scaffold-verify/"],
+    rules: {
+      "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
+    },
+  },
+  {
+    ignores: [
+      "node_modules/",
+      ".scaffold-verify/",
+      "**/dist/",
+      "**/build/",
+      "packages/plugin/ui/",
+      "packages/plugin/prefs/",
+    ],
   },
 ];

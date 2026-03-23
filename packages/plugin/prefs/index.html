@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Watch Party Preferences</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 16px; }
+  label { display: block; margin-bottom: 4px; font-size: 13px; }
+  input { width: 100%; padding: 6px; margin-bottom: 12px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+</style>
+</head>
+<body>
+<label for="backendUrl">Backend URL</label>
+<input id="backendUrl" type="url" placeholder="https://your-worker.workers.dev" />
+
+<label for="displayName">Display Name</label>
+<input id="displayName" type="text" placeholder="Your name" />
+
+<label for="driftThresholdMs">Drift Threshold (ms)</label>
+<input id="driftThresholdMs" type="number" value="2000" min="500" max="10000" step="100" />
+
+<script>
+  const fields = ["backendUrl", "displayName", "driftThresholdMs"];
+  fields.forEach((key) => {
+    const el = document.getElementById(key);
+    const stored = iina.preference.get(key);
+    if (stored != null) el.value = stored;
+    el.addEventListener("change", () => {
+      iina.preference.set(key, key === "driftThresholdMs" ? Number(el.value) : el.value);
+    });
+  });
+</script>
+</body>
+</html>

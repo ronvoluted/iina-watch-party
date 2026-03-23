@@ -1,0 +1,28 @@
+{
+  "name": "Watch Party",
+  "identifier": "com.github.iina-watch-party",
+  "version": "0.1.0",
+  "description": "Sync playback between two IINA users over a real-time channel",
+  "author": {
+    "name": "iina-watch-party contributors"
+  },
+  "entry": "src/main.js",
+  "permissions": [
+    "show-osd",
+    "network-request",
+    "video-overlay"
+  ],
+  "sidebarTab": {
+    "name": "Watch Party"
+  },
+  "preferencesPage": "prefs/index.html",
+  "preferenceDefaults": {
+    "backendUrl": "",
+    "displayName": "",
+    "driftThresholdMs": 2000
+  },
+  "allowedDomains": [
+    "localhost:*",
+    "127.0.0.1:*"
+  ]
+}

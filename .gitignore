@@ -3,3 +3,6 @@ node_modules/
 bun.lock
 *.tsbuildinfo
 .DS_Store
+dist/
+build/
+.wrangler/
