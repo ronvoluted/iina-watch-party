@@ -18,11 +18,14 @@ export interface SyncConfig {
   driftThresholdMs: number;
   /** Duration in ms to suppress local echo after applying a remote command. */
   suppressionWindowMs: number;
+  /** Minimum ms between corrective seeks to prevent seek spam. */
+  correctionCooldownMs: number;
 }
 
 export const DEFAULT_SYNC_CONFIG: SyncConfig = {
   driftThresholdMs: 2000,
   suppressionWindowMs: 500,
+  correctionCooldownMs: 5000,
 };
 
 // ---------------------------------------------------------------------------
@@ -103,6 +106,10 @@ export class SyncEngine {
   readonly config: SyncConfig;
   state: PlayerState;
   private suppressions: SuppressionEntry[] = [];
+  /** Timestamp (ms) when positionMs was last set. Used for drift estimation. */
+  lastUpdateMs: number = 0;
+  /** Timestamp (ms) of the last corrective seek. Used for cooldown. */
+  lastCorrectionMs: number = Number.NEGATIVE_INFINITY;
 
   constructor(role: Role, config: Partial<SyncConfig> = {}) {
     this.role = role;
@@ -183,25 +190,43 @@ export class SyncEngine {
   }
 
   // -------------------------------------------------------------------------
+  // Position tracking
+  // -------------------------------------------------------------------------
+
+  /** Estimate current playback position based on elapsed time and speed. */
+  estimatePosition(nowMs: number): number {
+    if (this.state.paused || this.state.buffering || this.state.seeking) {
+      return this.state.positionMs;
+    }
+    const elapsed = Math.max(0, nowMs - this.lastUpdateMs);
+    return this.state.positionMs + elapsed * this.state.speed;
+  }
+
+  private updatePosition(positionMs: number, nowMs: number): void {
+    this.state.positionMs = positionMs;
+    this.lastUpdateMs = nowMs;
+  }
+
+  // -------------------------------------------------------------------------
   // Local event handlers
   // -------------------------------------------------------------------------
 
   private onLocalPlay(a: { positionMs: number; nowMs: number }): SyncEffect[] {
     this.state.paused = false;
-    this.state.positionMs = a.positionMs;
+    this.updatePosition(a.positionMs, a.nowMs);
     if (this.consumeSuppression("play", a.nowMs)) return [];
     return [{ type: "send-play", positionMs: a.positionMs }];
   }
 
   private onLocalPause(a: { positionMs: number; nowMs: number }): SyncEffect[] {
     this.state.paused = true;
-    this.state.positionMs = a.positionMs;
+    this.updatePosition(a.positionMs, a.nowMs);
     if (this.consumeSuppression("pause", a.nowMs)) return [];
     return [{ type: "send-pause", positionMs: a.positionMs }];
   }
 
   private onLocalSeek(a: { positionMs: number; nowMs: number }): SyncEffect[] {
-    this.state.positionMs = a.positionMs;
+    this.updatePosition(a.positionMs, a.nowMs);
     if (this.consumeSuppression("seek", a.nowMs)) return [];
     return [{ type: "send-seek", positionMs: a.positionMs, cause: "user" }];
   }
@@ -218,7 +243,7 @@ export class SyncEngine {
 
   private onRemotePlay(a: { positionMs: number; nowMs: number }): SyncEffect[] {
     this.state.paused = false;
-    this.state.positionMs = a.positionMs;
+    this.updatePosition(a.positionMs, a.nowMs);
     this.addSuppression("play", a.nowMs);
     this.addSuppression("seek", a.nowMs);
     return [
@@ -229,7 +254,7 @@ export class SyncEngine {
 
   private onRemotePause(a: { positionMs: number; nowMs: number }): SyncEffect[] {
     this.state.paused = true;
-    this.state.positionMs = a.positionMs;
+    this.updatePosition(a.positionMs, a.nowMs);
     this.addSuppression("pause", a.nowMs);
     this.addSuppression("seek", a.nowMs);
     return [
@@ -239,7 +264,7 @@ export class SyncEngine {
   }
 
   private onRemoteSeek(a: { positionMs: number; nowMs: number }): SyncEffect[] {
-    this.state.positionMs = a.positionMs;
+    this.updatePosition(a.positionMs, a.nowMs);
     this.addSuppression("seek", a.nowMs);
     return [{ type: "seek", positionMs: a.positionMs }];
   }
@@ -257,7 +282,7 @@ export class SyncEngine {
     buffering?: boolean;
     nowMs: number;
   }): SyncEffect[] {
-    this.state.positionMs = a.positionMs;
+    this.updatePosition(a.positionMs, a.nowMs);
     this.state.paused = a.paused;
     this.state.speed = a.speed;
     this.state.buffering = a.buffering ?? false;
@@ -300,9 +325,15 @@ export class SyncEngine {
     if (this.state.paused || this.state.buffering || this.state.seeking) return effects;
     if (a.paused || a.buffering || a.seeking) return effects;
 
-    const drift = Math.abs(this.state.positionMs - a.positionMs);
+    // Cooldown: skip if we corrected recently to prevent seek spam
+    if (a.nowMs - this.lastCorrectionMs < this.config.correctionCooldownMs) return effects;
+
+    // Estimate guest position based on elapsed time and playback speed
+    const estimatedPos = this.estimatePosition(a.nowMs);
+    const drift = Math.abs(estimatedPos - a.positionMs);
     if (drift > this.config.driftThresholdMs) {
-      this.state.positionMs = a.positionMs;
+      this.updatePosition(a.positionMs, a.nowMs);
+      this.lastCorrectionMs = a.nowMs;
       effects.push({ type: "seek", positionMs: a.positionMs });
       this.addSuppression("seek", a.nowMs);
     }

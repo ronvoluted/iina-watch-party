@@ -143,12 +143,19 @@ function executeEffects(effects: SyncEffect[]) {
 function startHeartbeat() {
   stopHeartbeat();
   heartbeatTimer = setInterval(() => {
-    if (connState !== "connected") return;
+    if (connState !== "connected" || !syncEngine) return;
+    const positionMs = getPositionMs();
+    const nowMs = Date.now();
+    // Refresh engine position from the actual player to keep estimation accurate
+    syncEngine.state.positionMs = positionMs;
+    syncEngine.lastUpdateMs = nowMs;
     sendProtocol({
       ...makeEnvelope("heartbeat"),
-      positionMs: getPositionMs(),
+      positionMs,
       paused: core.status.paused ?? false,
       speed: core.status.speed ?? 1,
+      buffering: syncEngine.state.buffering,
+      seeking: syncEngine.state.seeking,
     });
   }, HEARTBEAT_INTERVAL_MS);
 }

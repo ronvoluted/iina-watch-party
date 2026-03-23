@@ -296,6 +296,7 @@ describe("drift correction", () => {
     const engine = new SyncEngine("guest", { driftThresholdMs: 2000 });
     engine.state.paused = false;
     engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
@@ -314,6 +315,7 @@ describe("drift correction", () => {
     const engine = new SyncEngine("guest", { driftThresholdMs: 2000 });
     engine.state.paused = false;
     engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
@@ -331,6 +333,7 @@ describe("drift correction", () => {
     const engine = new SyncEngine("host");
     engine.state.paused = false;
     engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
@@ -348,6 +351,7 @@ describe("drift correction", () => {
     const engine = new SyncEngine("guest", { driftThresholdMs: 2000 });
     engine.state.paused = true;
     engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
@@ -365,6 +369,7 @@ describe("drift correction", () => {
     engine.state.paused = false;
     engine.state.buffering = true;
     engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
@@ -382,6 +387,7 @@ describe("drift correction", () => {
     engine.state.paused = false;
     engine.state.seeking = true;
     engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
@@ -398,6 +404,7 @@ describe("drift correction", () => {
     const engine = new SyncEngine("guest", { driftThresholdMs: 2000 });
     engine.state.paused = false;
     engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
@@ -414,6 +421,7 @@ describe("drift correction", () => {
     const engine = new SyncEngine("guest", { driftThresholdMs: 2000 });
     engine.state.paused = false;
     engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
@@ -431,6 +439,7 @@ describe("drift correction", () => {
     const engine = new SyncEngine("guest", { driftThresholdMs: 2000 });
     engine.state.paused = false;
     engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
@@ -448,6 +457,7 @@ describe("drift correction", () => {
     const engine = new SyncEngine("guest", { driftThresholdMs: 2000 });
     engine.state.paused = false;
     engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
 
     engine.apply({
       kind: "remote-heartbeat",
@@ -472,6 +482,7 @@ describe("speed correction via heartbeat", () => {
     engine.state.paused = false;
     engine.state.speed = 1;
     engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
@@ -507,6 +518,7 @@ describe("speed correction via heartbeat", () => {
     engine.state.paused = true;
     engine.state.speed = 1;
     engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
@@ -527,6 +539,7 @@ describe("speed correction via heartbeat", () => {
     engine.state.paused = false;
     engine.state.speed = 1;
     engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
@@ -573,6 +586,7 @@ describe("realistic sequences", () => {
     const engine = new SyncEngine("guest");
     engine.state.paused = false;
     engine.state.positionMs = 5000;
+    engine.lastUpdateMs = T;
 
     // User manually seeks
     const effects = engine.apply({ kind: "local-seek", positionMs: 60000, nowMs: T });
@@ -600,6 +614,7 @@ describe("realistic sequences", () => {
     const engine = new SyncEngine("guest", { driftThresholdMs: 2000 });
     engine.state.paused = false;
     engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
 
     // Host heartbeat shows drift
     const effects = engine.apply({
@@ -615,11 +630,11 @@ describe("realistic sequences", () => {
     const echo = engine.apply({ kind: "local-seek", positionMs: 15000, nowMs: T + 10 });
     expect(echo).toEqual([]);
 
-    // Next heartbeat within threshold — no correction
-    engine.state.positionMs = 15500;
+    // Next heartbeat: position estimation accounts for elapsed time.
+    // At T+5000, estimated = 15000 + 5000*1 = 20000, host at 20500 → drift 500 < 2000
     const nextEffects = engine.apply({
       kind: "remote-heartbeat",
-      positionMs: 16000,
+      positionMs: 20500,
       paused: false,
       speed: 1,
       nowMs: T + 5000,
@@ -671,6 +686,7 @@ describe("drift correction boundary", () => {
     const engine = new SyncEngine("guest", { driftThresholdMs: 2000 });
     engine.state.paused = false;
     engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
@@ -687,6 +703,7 @@ describe("drift correction boundary", () => {
     const engine = new SyncEngine("guest", { driftThresholdMs: 2000 });
     engine.state.paused = false;
     engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
@@ -704,6 +721,7 @@ describe("drift correction boundary", () => {
     const engine = new SyncEngine("guest", { driftThresholdMs: 2000 });
     engine.state.paused = false;
     engine.state.positionMs = 20000;
+    engine.lastUpdateMs = T;
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
@@ -819,10 +837,12 @@ describe("SyncEngine constructor edge cases", () => {
     const engine = new SyncEngine("guest", {
       driftThresholdMs: 500,
       suppressionWindowMs: 100,
+      correctionCooldownMs: 3000,
     });
     expect(engine.config).toEqual({
       driftThresholdMs: 500,
       suppressionWindowMs: 100,
+      correctionCooldownMs: 3000,
     });
   });
 
@@ -853,5 +873,294 @@ describe("host role behavior", () => {
       { type: "set-paused", paused: false },
       { type: "seek", positionMs: 5000 },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Position estimation
+// ---------------------------------------------------------------------------
+
+describe("position estimation", () => {
+  test("estimates position based on elapsed time and speed", () => {
+    const engine = new SyncEngine("guest");
+    engine.state.paused = false;
+    engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
+
+    // 3 seconds later at 1x speed
+    expect(engine.estimatePosition(T + 3000)).toBe(13000);
+  });
+
+  test("accounts for playback speed", () => {
+    const engine = new SyncEngine("guest");
+    engine.state.paused = false;
+    engine.state.speed = 2;
+    engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
+
+    // 3 seconds later at 2x speed → 6000ms of playback
+    expect(engine.estimatePosition(T + 3000)).toBe(16000);
+  });
+
+  test("returns raw position when paused", () => {
+    const engine = new SyncEngine("guest");
+    engine.state.paused = true;
+    engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
+
+    expect(engine.estimatePosition(T + 5000)).toBe(10000);
+  });
+
+  test("returns raw position when buffering", () => {
+    const engine = new SyncEngine("guest");
+    engine.state.paused = false;
+    engine.state.buffering = true;
+    engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
+
+    expect(engine.estimatePosition(T + 5000)).toBe(10000);
+  });
+
+  test("returns raw position when seeking", () => {
+    const engine = new SyncEngine("guest");
+    engine.state.paused = false;
+    engine.state.seeking = true;
+    engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
+
+    expect(engine.estimatePosition(T + 5000)).toBe(10000);
+  });
+
+  test("drift uses estimated position instead of stale position", () => {
+    const engine = new SyncEngine("guest", { driftThresholdMs: 2000 });
+    engine.state.paused = false;
+    engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
+
+    // 5 seconds later: estimated = 10000 + 5000*1 = 15000
+    // Host at 15500 → drift = 500 < 2000 → no correction
+    const effects = engine.apply({
+      kind: "remote-heartbeat",
+      positionMs: 15500,
+      paused: false,
+      speed: 1,
+      nowMs: T + 5000,
+    });
+
+    expect(hasEffect(effects, "seek")).toBe(false);
+  });
+
+  test("drift corrects when estimated position diverges from host", () => {
+    const engine = new SyncEngine("guest", { driftThresholdMs: 2000 });
+    engine.state.paused = false;
+    engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
+
+    // 5 seconds later: estimated = 10000 + 5000*1 = 15000
+    // Host at 18000 → drift = 3000 > 2000 → correction
+    const effects = engine.apply({
+      kind: "remote-heartbeat",
+      positionMs: 18000,
+      paused: false,
+      speed: 1,
+      nowMs: T + 5000,
+    });
+
+    expect(hasEffect(effects, "seek")).toBe(true);
+    expect(findEffect(effects, "seek")?.positionMs).toBe(18000);
+  });
+
+  test("estimation with fractional speed", () => {
+    const engine = new SyncEngine("guest");
+    engine.state.paused = false;
+    engine.state.speed = 0.5;
+    engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
+
+    // 4 seconds at 0.5x → 2000ms of playback
+    expect(engine.estimatePosition(T + 4000)).toBe(12000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Correction cooldown
+// ---------------------------------------------------------------------------
+
+describe("correction cooldown", () => {
+  test("second correction within cooldown is skipped", () => {
+    const engine = new SyncEngine("guest", {
+      driftThresholdMs: 2000,
+      correctionCooldownMs: 5000,
+    });
+    engine.state.paused = false;
+    engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
+
+    // First correction triggers
+    const e1 = engine.apply({
+      kind: "remote-heartbeat",
+      positionMs: 15000,
+      paused: false,
+      speed: 1,
+      nowMs: T,
+    });
+    expect(hasEffect(e1, "seek")).toBe(true);
+
+    // 3 seconds later (within 5s cooldown), large drift still skipped
+    engine.state.positionMs = 15000;
+    engine.lastUpdateMs = T + 3000;
+    const e2 = engine.apply({
+      kind: "remote-heartbeat",
+      positionMs: 25000,
+      paused: false,
+      speed: 1,
+      nowMs: T + 3000,
+    });
+    expect(hasEffect(e2, "seek")).toBe(false);
+  });
+
+  test("correction after cooldown expires triggers normally", () => {
+    const engine = new SyncEngine("guest", {
+      driftThresholdMs: 2000,
+      correctionCooldownMs: 5000,
+    });
+    engine.state.paused = false;
+    engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
+
+    // First correction
+    engine.apply({
+      kind: "remote-heartbeat",
+      positionMs: 15000,
+      paused: false,
+      speed: 1,
+      nowMs: T,
+    });
+
+    // 5 seconds later (cooldown expired), correction triggers
+    engine.state.positionMs = 15000;
+    engine.lastUpdateMs = T + 5000;
+    const e2 = engine.apply({
+      kind: "remote-heartbeat",
+      positionMs: 20000,
+      paused: false,
+      speed: 1,
+      nowMs: T + 5000,
+    });
+    expect(hasEffect(e2, "seek")).toBe(true);
+    expect(findEffect(e2, "seek")?.positionMs).toBe(20000);
+  });
+
+  test("cooldown does not affect speed correction", () => {
+    const engine = new SyncEngine("guest", {
+      driftThresholdMs: 2000,
+      correctionCooldownMs: 5000,
+    });
+    engine.state.paused = false;
+    engine.state.speed = 1;
+    engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
+
+    // Trigger a correction to start cooldown
+    engine.apply({
+      kind: "remote-heartbeat",
+      positionMs: 15000,
+      paused: false,
+      speed: 1,
+      nowMs: T,
+    });
+
+    // During cooldown, speed mismatch still corrected
+    engine.state.speed = 1;
+    const e2 = engine.apply({
+      kind: "remote-heartbeat",
+      positionMs: 15100,
+      paused: false,
+      speed: 2,
+      nowMs: T + 1000,
+    });
+    expect(findEffect(e2, "set-speed")?.speed).toBe(2);
+    // But seek is skipped due to cooldown
+    expect(hasEffect(e2, "seek")).toBe(false);
+  });
+
+  test("first correction always works (no initial cooldown)", () => {
+    const engine = new SyncEngine("guest", {
+      driftThresholdMs: 2000,
+      correctionCooldownMs: 10000,
+    });
+    engine.state.paused = false;
+    engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
+
+    const effects = engine.apply({
+      kind: "remote-heartbeat",
+      positionMs: 15000,
+      paused: false,
+      speed: 1,
+      nowMs: T,
+    });
+    expect(hasEffect(effects, "seek")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Position tracking via actions
+// ---------------------------------------------------------------------------
+
+describe("position tracking", () => {
+  test("local-play updates lastUpdateMs", () => {
+    const engine = new SyncEngine("guest");
+    engine.apply({ kind: "local-play", positionMs: 5000, nowMs: T });
+    expect(engine.lastUpdateMs).toBe(T);
+    expect(engine.state.positionMs).toBe(5000);
+  });
+
+  test("local-pause updates lastUpdateMs", () => {
+    const engine = new SyncEngine("guest");
+    engine.apply({ kind: "local-pause", positionMs: 3000, nowMs: T });
+    expect(engine.lastUpdateMs).toBe(T);
+  });
+
+  test("local-seek updates lastUpdateMs", () => {
+    const engine = new SyncEngine("guest");
+    engine.apply({ kind: "local-seek", positionMs: 9000, nowMs: T });
+    expect(engine.lastUpdateMs).toBe(T);
+  });
+
+  test("remote-play updates lastUpdateMs", () => {
+    const engine = new SyncEngine("guest");
+    engine.apply({ kind: "remote-play", positionMs: 8000, nowMs: T });
+    expect(engine.lastUpdateMs).toBe(T);
+  });
+
+  test("remote-state updates lastUpdateMs", () => {
+    const engine = new SyncEngine("guest");
+    engine.apply({
+      kind: "remote-state",
+      positionMs: 20000,
+      paused: false,
+      speed: 1,
+      nowMs: T,
+    });
+    expect(engine.lastUpdateMs).toBe(T);
+  });
+
+  test("drift correction updates lastUpdateMs", () => {
+    const engine = new SyncEngine("guest", { driftThresholdMs: 2000 });
+    engine.state.paused = false;
+    engine.state.positionMs = 10000;
+    engine.lastUpdateMs = T;
+
+    engine.apply({
+      kind: "remote-heartbeat",
+      positionMs: 15000,
+      paused: false,
+      speed: 1,
+      nowMs: T + 100,
+    });
+
+    expect(engine.lastUpdateMs).toBe(T + 100);
+    expect(engine.state.positionMs).toBe(15000);
   });
 });
