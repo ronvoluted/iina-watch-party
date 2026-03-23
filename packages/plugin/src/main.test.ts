@@ -381,7 +381,7 @@ describe("main connection state", () => {
       const file = msg.file as Record<string, unknown>;
       expect(file).toBeDefined();
       expect(file.durationMs).toBe(7200000);
-      expect(file.title).toBe("movie.mp4");
+      expect(file.name).toBe("movie.mp4");
     });
 
     test("uses default display name when preference is empty", () => {
