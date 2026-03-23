@@ -627,3 +627,231 @@ describe("realistic sequences", () => {
     expect(hasEffect(nextEffects, "seek")).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// activeSuppressions getter
+// ---------------------------------------------------------------------------
+
+describe("activeSuppressions", () => {
+  test("returns active suppression entries after remote command", () => {
+    const engine = new SyncEngine("guest", { suppressionWindowMs: 200 });
+    engine.apply({ kind: "remote-seek", positionMs: 5000, nowMs: T });
+
+    const active = engine.activeSuppressions;
+    expect(active).toHaveLength(1);
+    expect(active[0].action).toBe("seek");
+    expect(active[0].expiresAtMs).toBe(T + 200);
+  });
+
+  test("returns empty after suppressions are consumed", () => {
+    const engine = new SyncEngine("guest", { suppressionWindowMs: 200 });
+    engine.apply({ kind: "remote-seek", positionMs: 5000, nowMs: T });
+    engine.apply({ kind: "local-seek", positionMs: 5000, nowMs: T + 10 });
+
+    expect(engine.activeSuppressions).toHaveLength(0);
+  });
+
+  test("expired suppressions are pruned on next apply", () => {
+    const engine = new SyncEngine("guest", { suppressionWindowMs: 100 });
+    engine.apply({ kind: "remote-seek", positionMs: 5000, nowMs: T });
+    expect(engine.activeSuppressions).toHaveLength(1);
+
+    // Trigger pruning by applying any action after expiry
+    engine.apply({ kind: "local-buffering", buffering: false, nowMs: T + 200 });
+    expect(engine.activeSuppressions).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Drift correction boundary
+// ---------------------------------------------------------------------------
+
+describe("drift correction boundary", () => {
+  test("drift at exactly threshold does not correct (uses >)", () => {
+    const engine = new SyncEngine("guest", { driftThresholdMs: 2000 });
+    engine.state.paused = false;
+    engine.state.positionMs = 10000;
+
+    const effects = engine.apply({
+      kind: "remote-heartbeat",
+      positionMs: 12000, // exactly 2000ms drift
+      paused: false,
+      speed: 1,
+      nowMs: T,
+    });
+
+    expect(hasEffect(effects, "seek")).toBe(false);
+  });
+
+  test("drift at threshold + 1 corrects", () => {
+    const engine = new SyncEngine("guest", { driftThresholdMs: 2000 });
+    engine.state.paused = false;
+    engine.state.positionMs = 10000;
+
+    const effects = engine.apply({
+      kind: "remote-heartbeat",
+      positionMs: 12001,
+      paused: false,
+      speed: 1,
+      nowMs: T,
+    });
+
+    expect(hasEffect(effects, "seek")).toBe(true);
+    expect(findEffect(effects, "seek")?.positionMs).toBe(12001);
+  });
+
+  test("negative drift (guest ahead of host) also corrects", () => {
+    const engine = new SyncEngine("guest", { driftThresholdMs: 2000 });
+    engine.state.paused = false;
+    engine.state.positionMs = 20000;
+
+    const effects = engine.apply({
+      kind: "remote-heartbeat",
+      positionMs: 15000, // guest is 5s ahead
+      paused: false,
+      speed: 1,
+      nowMs: T,
+    });
+
+    expect(hasEffect(effects, "seek")).toBe(true);
+    expect(findEffect(effects, "seek")?.positionMs).toBe(15000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Local buffering/seeking toggle
+// ---------------------------------------------------------------------------
+
+describe("local buffering and seeking toggles", () => {
+  test("local-buffering toggles false", () => {
+    const engine = new SyncEngine("guest");
+    engine.state.buffering = true;
+    const effects = engine.apply({ kind: "local-buffering", buffering: false, nowMs: T });
+    expect(engine.state.buffering).toBe(false);
+    expect(effects).toEqual([]);
+  });
+
+  test("local-seeking toggles false", () => {
+    const engine = new SyncEngine("guest");
+    engine.state.seeking = true;
+    const effects = engine.apply({ kind: "local-seeking", seeking: false, nowMs: T });
+    expect(engine.state.seeking).toBe(false);
+    expect(effects).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Remote-state suppression with paused states
+// ---------------------------------------------------------------------------
+
+describe("remote-state suppression details", () => {
+  test("remote-state with paused=false adds play suppression (not pause)", () => {
+    const engine = new SyncEngine("guest");
+    engine.apply({
+      kind: "remote-state",
+      positionMs: 5000,
+      paused: false,
+      speed: 1,
+      nowMs: T,
+    });
+
+    // play is suppressed
+    const playEffects = engine.apply({ kind: "local-play", positionMs: 5000, nowMs: T + 5 });
+    expect(playEffects).toEqual([]);
+
+    // pause is NOT suppressed (no pause suppression was added)
+    const pauseEffects = engine.apply({ kind: "local-pause", positionMs: 5000, nowMs: T + 10 });
+    expect(pauseEffects).toEqual([{ type: "send-pause", positionMs: 5000 }]);
+  });
+
+  test("remote-state with paused=true adds pause suppression (not play)", () => {
+    const engine = new SyncEngine("guest");
+    engine.apply({
+      kind: "remote-state",
+      positionMs: 5000,
+      paused: true,
+      speed: 1,
+      nowMs: T,
+    });
+
+    // pause is suppressed
+    const pauseEffects = engine.apply({ kind: "local-pause", positionMs: 5000, nowMs: T + 5 });
+    expect(pauseEffects).toEqual([]);
+
+    // play is NOT suppressed
+    const playEffects = engine.apply({ kind: "local-play", positionMs: 5000, nowMs: T + 10 });
+    expect(playEffects).toEqual([{ type: "send-play", positionMs: 5000 }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Multiple suppression stacking
+// ---------------------------------------------------------------------------
+
+describe("suppression stacking", () => {
+  test("multiple remote seeks stack independent suppressions", () => {
+    const engine = new SyncEngine("guest");
+    engine.apply({ kind: "remote-seek", positionMs: 1000, nowMs: T });
+    engine.apply({ kind: "remote-seek", positionMs: 2000, nowMs: T + 10 });
+
+    expect(engine.activeSuppressions.filter((s) => s.action === "seek")).toHaveLength(2);
+
+    // First local seek consumes one
+    engine.apply({ kind: "local-seek", positionMs: 2000, nowMs: T + 20 });
+    expect(engine.activeSuppressions.filter((s) => s.action === "seek")).toHaveLength(1);
+
+    // Second local seek consumes the other
+    engine.apply({ kind: "local-seek", positionMs: 2500, nowMs: T + 30 });
+    expect(engine.activeSuppressions.filter((s) => s.action === "seek")).toHaveLength(0);
+
+    // Third local seek is not suppressed
+    const effects = engine.apply({ kind: "local-seek", positionMs: 3000, nowMs: T + 40 });
+    expect(effects).toEqual([{ type: "send-seek", positionMs: 3000, cause: "user" }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Constructor edge cases
+// ---------------------------------------------------------------------------
+
+describe("SyncEngine constructor edge cases", () => {
+  test("full config override replaces all defaults", () => {
+    const engine = new SyncEngine("guest", {
+      driftThresholdMs: 500,
+      suppressionWindowMs: 100,
+    });
+    expect(engine.config).toEqual({
+      driftThresholdMs: 500,
+      suppressionWindowMs: 100,
+    });
+  });
+
+  test("empty config override uses all defaults", () => {
+    const engine = new SyncEngine("host", {});
+    expect(engine.config).toEqual(DEFAULT_SYNC_CONFIG);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Host role behavior
+// ---------------------------------------------------------------------------
+
+describe("host role behavior", () => {
+  test("host local events emit send effects same as guest", () => {
+    const engine = new SyncEngine("host");
+    const playEffects = engine.apply({ kind: "local-play", positionMs: 100, nowMs: T });
+    expect(playEffects).toEqual([{ type: "send-play", positionMs: 100 }]);
+
+    const pauseEffects = engine.apply({ kind: "local-pause", positionMs: 200, nowMs: T + 10 });
+    expect(pauseEffects).toEqual([{ type: "send-pause", positionMs: 200 }]);
+  });
+
+  test("host receives remote commands and applies them", () => {
+    const engine = new SyncEngine("host");
+    const effects = engine.apply({ kind: "remote-play", positionMs: 5000, nowMs: T });
+    expect(effects).toEqual([
+      { type: "set-paused", paused: false },
+      { type: "seek", positionMs: 5000 },
+    ]);
+  });
+});

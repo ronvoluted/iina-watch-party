@@ -189,4 +189,93 @@ describe("ROOM_CODE_ALPHABET", () => {
   test("contains only uppercase letters and digits", () => {
     expect(ROOM_CODE_ALPHABET).toMatch(/^[A-Z0-9]+$/);
   });
+
+  test("has 31 characters (26 letters - 3 ambiguous + 10 digits - 2 ambiguous)", () => {
+    expect(ROOM_CODE_ALPHABET.length).toBe(31);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseInvite - additional edge cases
+// ---------------------------------------------------------------------------
+
+describe("parseInvite edge cases", () => {
+  test("rejects secret with special characters", () => {
+    const result = parseInvite("ABCDEF:abc!@#$");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("invalid characters");
+    }
+  });
+
+  test("rejects room code with special characters", () => {
+    const result = parseInvite("AB@DE#:c2VjcmV0");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("invalid characters");
+    }
+  });
+
+  test("rejects room code with digits not in alphabet (0 and 1)", () => {
+    const result = parseInvite("A01BCD:c2VjcmV0");
+    expect(result.ok).toBe(false);
+  });
+
+  test("accepts room code using all digits from alphabet", () => {
+    // 2-9 are valid digits in the alphabet
+    const result = parseInvite("234567:c2VjcmV0");
+    expect(result.ok).toBe(true);
+  });
+
+  test("accepts single-character secret", () => {
+    const result = parseInvite("ABCDEF:a");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.invite.secret).toBe("a");
+    }
+  });
+
+  test("accepts long secret", () => {
+    const longSecret = "abcdefghijklmnopqrstuvwxyz0123456789-_ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const result = parseInvite(`ABCDEF:${longSecret}`);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.invite.secret).toBe(longSecret);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateRoomCode - additional edge cases
+// ---------------------------------------------------------------------------
+
+describe("validateRoomCode edge cases", () => {
+  test("rejects room code with spaces", () => {
+    expect(validateRoomCode("AB CD ")).not.toBeNull();
+  });
+
+  test("rejects room code with lowercase", () => {
+    expect(validateRoomCode("abcdef")).not.toBeNull();
+  });
+
+  test("accepts code from last 6 chars of alphabet", () => {
+    const code = ROOM_CODE_ALPHABET.slice(-ROOM_CODE_LENGTH);
+    expect(validateRoomCode(code)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatInvite edge cases
+// ---------------------------------------------------------------------------
+
+describe("formatInvite edge cases", () => {
+  test("preserves secret with padding characters", () => {
+    const invite = formatInvite("ABCDEF", "dGVzdA==");
+    expect(invite).toBe("ABCDEF:dGVzdA==");
+  });
+
+  test("preserves secret with hyphens and underscores", () => {
+    const invite = formatInvite("HJKMNP", "a-b_c");
+    expect(invite).toBe("HJKMNP:a-b_c");
+  });
 });

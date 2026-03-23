@@ -625,3 +625,299 @@ describe("goodbye message", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Boundary and edge cases
+// ---------------------------------------------------------------------------
+
+describe("boundary and edge cases", () => {
+  test("accepts payload at exactly MAX_MESSAGE_SIZE_BYTES", () => {
+    const base = json({
+      ...envelope(),
+      type: "goodbye",
+      reason: "",
+    });
+    // Pad reason to hit exactly MAX_MESSAGE_SIZE_BYTES
+    const byteLength = new TextEncoder().encode(base).byteLength;
+    const padding = "x".repeat(MAX_MESSAGE_SIZE_BYTES - byteLength);
+    const padded = json({
+      ...envelope(),
+      type: "goodbye",
+      reason: padding,
+    });
+    const paddedByteLength = new TextEncoder().encode(padded).byteLength;
+    expect(paddedByteLength).toBeLessThanOrEqual(MAX_MESSAGE_SIZE_BYTES);
+    expectOk(validateMessage(padded));
+  });
+
+  test("rejects Infinity as tsMs", () => {
+    // JSON.stringify converts Infinity to null, so this tests null tsMs
+    expectErr(
+      validateMessage(json({ ...envelope(), type: "play", positionMs: 0, tsMs: null })),
+      "tsMs",
+    );
+  });
+
+  test("rejects zero tsMs", () => {
+    expectErr(
+      validateMessage(json({ ...envelope(), type: "play", positionMs: 0, tsMs: 0 })),
+      "tsMs",
+    );
+  });
+
+  test("accepts positionMs of zero", () => {
+    expectOk(
+      validateMessage(json({ ...envelope(), type: "play", positionMs: 0 })),
+    );
+  });
+
+  test("rejects NaN positionMs (serialized as null)", () => {
+    expectErr(
+      validateMessage(json({ ...envelope(), type: "play", positionMs: null })),
+      "positionMs",
+    );
+  });
+
+  test("rejects non-numeric positionMs", () => {
+    expectErr(
+      validateMessage(json({ ...envelope(), type: "play", positionMs: "1000" })),
+      "positionMs",
+    );
+  });
+
+  test("rejects non-numeric sessionId", () => {
+    expectErr(
+      validateMessage(json({ ...envelope(), type: "play", positionMs: 0, sessionId: 123 })),
+      "sessionId",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// auth - additional edge cases
+// ---------------------------------------------------------------------------
+
+describe("auth edge cases", () => {
+  test("rejects empty secret string", () => {
+    expectErr(
+      validateMessage(json({ ...envelope(), type: "auth", secret: "", file: {} })),
+      "secret",
+    );
+  });
+
+  test("rejects displayName as number", () => {
+    expectErr(
+      validateMessage(
+        json({ ...envelope(), type: "auth", secret: "s", displayName: 42, file: {} }),
+      ),
+      "displayName",
+    );
+  });
+
+  test("rejects file.name as number", () => {
+    expectErr(
+      validateMessage(
+        json({ ...envelope(), type: "auth", secret: "s", file: { name: 123 } }),
+      ),
+      "file.name",
+    );
+  });
+
+  test("rejects file as array", () => {
+    expectErr(
+      validateMessage(
+        json({ ...envelope(), type: "auth", secret: "s", file: [1, 2] }),
+      ),
+      "file",
+    );
+  });
+
+  test("accepts auth with minimal file (empty object)", () => {
+    expectOk(
+      validateMessage(json({ ...envelope(), type: "auth", secret: "key", file: {} })),
+    );
+  });
+
+  test("accepts auth with displayName but no desiredRole", () => {
+    expectOk(
+      validateMessage(
+        json({
+          ...envelope(),
+          type: "auth",
+          secret: "key",
+          displayName: "Alice",
+          file: {},
+        }),
+      ),
+    );
+  });
+
+  test("accepts auth with desiredRole guest", () => {
+    expectOk(
+      validateMessage(
+        json({
+          ...envelope(),
+          type: "auth",
+          secret: "key",
+          desiredRole: "guest",
+          file: {},
+        }),
+      ),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// presence - all valid events
+// ---------------------------------------------------------------------------
+
+describe("presence - all valid events", () => {
+  for (const event of ["peer-joined", "peer-left", "peer-replaced"]) {
+    test(`accepts presence with event "${event}"`, () => {
+      expectOk(
+        validateMessage(
+          json({
+            ...envelope({ sessionId: "server" }),
+            type: "presence",
+            event,
+            role: "host",
+          }),
+        ),
+      );
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// state - all valid reasons
+// ---------------------------------------------------------------------------
+
+describe("state - all valid reasons", () => {
+  for (const reason of ["initial", "reconnect", "manual"]) {
+    test(`accepts state with reason "${reason}"`, () => {
+      expectOk(
+        validateMessage(
+          json({
+            ...envelope(),
+            type: "state",
+            reason,
+            positionMs: 0,
+            paused: true,
+            speed: 1,
+          }),
+        ),
+      );
+    });
+  }
+
+  test("rejects non-boolean paused", () => {
+    expectErr(
+      validateMessage(
+        json({
+          ...envelope(),
+          type: "state",
+          reason: "initial",
+          positionMs: 0,
+          paused: "yes",
+          speed: 1,
+        }),
+      ),
+      "paused",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// warning - all valid codes
+// ---------------------------------------------------------------------------
+
+describe("warning - all valid codes", () => {
+  for (const code of ["file-mismatch", "peer-buffering", "room-expiring"]) {
+    test(`accepts warning with code "${code}"`, () => {
+      expectOk(
+        validateMessage(
+          json({
+            ...envelope(),
+            type: "warning",
+            code,
+            message: "test",
+          }),
+        ),
+      );
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// heartbeat - additional edge cases
+// ---------------------------------------------------------------------------
+
+describe("heartbeat edge cases", () => {
+  test("rejects non-boolean buffering", () => {
+    expectErr(
+      validateMessage(
+        json({
+          ...envelope(),
+          type: "heartbeat",
+          positionMs: 0,
+          paused: false,
+          speed: 1,
+          buffering: "yes",
+        }),
+      ),
+      "buffering",
+    );
+  });
+
+  test("rejects missing paused", () => {
+    expectErr(
+      validateMessage(
+        json({
+          ...envelope(),
+          type: "heartbeat",
+          positionMs: 0,
+          speed: 1,
+        }),
+      ),
+      "paused",
+    );
+  });
+
+  test("rejects missing speed", () => {
+    expectErr(
+      validateMessage(
+        json({
+          ...envelope(),
+          type: "heartbeat",
+          positionMs: 0,
+          paused: false,
+        }),
+      ),
+      "speed",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// seek - additional edge cases
+// ---------------------------------------------------------------------------
+
+describe("seek edge cases", () => {
+  test("rejects missing cause", () => {
+    expectErr(
+      validateMessage(
+        json({ ...envelope(), type: "seek", positionMs: 500 }),
+      ),
+      "cause",
+    );
+  });
+
+  test("rejects missing positionMs", () => {
+    expectErr(
+      validateMessage(
+        json({ ...envelope(), type: "seek", cause: "user" }),
+      ),
+      "positionMs",
+    );
+  });
+});
