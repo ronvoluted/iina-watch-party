@@ -476,9 +476,19 @@ export class Room extends DurableObject {
     }
 
     // New participant — check capacity
-    const participantCount = this.ctx.storage.sql
+    let participantCount = this.ctx.storage.sql
       .exec("SELECT COUNT(*) as cnt FROM participants")
       .toArray()[0].cnt as number;
+
+    // If room appears full, evict stale participants (disconnected without
+    // goodbye, e.g. app quit) and recheck. This lets a returning user reclaim
+    // a slot their old session left behind.
+    if (participantCount >= MAX_PARTICIPANTS) {
+      this.evictStaleParticipants();
+      participantCount = this.ctx.storage.sql
+        .exec("SELECT COUNT(*) as cnt FROM participants")
+        .toArray()[0].cnt as number;
+    }
 
     if (participantCount >= MAX_PARTICIPANTS) {
       roomLog("warn", "Auth rejected: room full", { roomCode, sessionId });
@@ -700,6 +710,36 @@ export class Room extends DurableObject {
       const att = this.getAttachment(ws);
       if (att.authenticated) {
         ws.send(message);
+      }
+    }
+  }
+
+  /**
+   * Remove participant records that have no active WebSocket connection.
+   * This handles the case where a client disconnected (e.g. quit the app)
+   * without sending a goodbye — their record lingers and blocks new joins.
+   */
+  private evictStaleParticipants(): void {
+    const activeSessionIds = new Set<string>();
+    for (const ws of this.ctx.getWebSockets()) {
+      const att = this.getAttachment(ws);
+      if (att.authenticated && att.sessionId) {
+        activeSessionIds.add(att.sessionId);
+      }
+    }
+
+    const rows = this.ctx.storage.sql
+      .exec("SELECT session_id FROM participants")
+      .toArray();
+
+    for (const row of rows) {
+      const sid = row.session_id as string;
+      if (!activeSessionIds.has(sid)) {
+        roomLog("info", "Evicting stale participant", { sessionId: sid });
+        this.ctx.storage.sql.exec(
+          "DELETE FROM participants WHERE session_id = ?",
+          sid,
+        );
       }
     }
   }

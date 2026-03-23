@@ -223,7 +223,10 @@ function wsOpenSocket(url, protocols) {
   socket.onclose = function (event) {
     socket = null;
     iina.postMessage("ws-closed", { code: event.code, reason: event.reason });
-    if (!wsIntentionalClose && wsConnectUrl) { wsScheduleReconnect(); }
+    // Don't reconnect on intentional close or server-rejected codes (auth/room errors).
+    var code = event.code;
+    var serverRejected = code >= 4001 && code <= 4005;
+    if (!wsIntentionalClose && !serverRejected && wsConnectUrl) { wsScheduleReconnect(); }
   };
 }
 

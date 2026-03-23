@@ -106,7 +106,9 @@ function openSocket(url, protocols) {
     socket = null;
     iina.postMessage("ws-closed", { code: code, reason: reason });
 
-    if (!intentionalClose && connectUrl) {
+    // Don't reconnect on server-rejected codes (auth/room errors).
+    var serverRejected = code >= 4001 && code <= 4005;
+    if (!intentionalClose && !serverRejected && connectUrl) {
       scheduleReconnect();
     }
   };
