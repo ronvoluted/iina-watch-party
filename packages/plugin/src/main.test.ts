@@ -722,6 +722,141 @@ describe("main connection state", () => {
     });
   });
 
+  describe("initial sync", () => {
+    test("host sends state snapshot on peer-joined", () => {
+      doCreateRoom();
+      overlayPosted = [];
+      coreStatus.position = 120.5;
+      coreStatus.paused = false;
+      coreStatus.speed = 1.25;
+
+      serverSend({ type: "presence", event: "peer-joined", role: "guest" });
+
+      const msg = lastSentProtocol();
+      expect(msg).toBeDefined();
+      expect(msg!.type).toBe("state");
+      expect(msg!.reason).toBe("initial");
+      expect(msg!.positionMs).toBe(120500);
+      expect(msg!.paused).toBe(false);
+      expect(msg!.speed).toBe(1.25);
+    });
+
+    test("host sends state snapshot on peer-replaced", () => {
+      doCreateRoom();
+      overlayPosted = [];
+      coreStatus.position = 60.0;
+      coreStatus.paused = true;
+      coreStatus.speed = 1.0;
+
+      serverSend({ type: "presence", event: "peer-replaced", role: "guest" });
+
+      const msg = lastSentProtocol();
+      expect(msg).toBeDefined();
+      expect(msg!.type).toBe("state");
+      expect(msg!.reason).toBe("initial");
+      expect(msg!.positionMs).toBe(60000);
+      expect(msg!.paused).toBe(true);
+      expect(msg!.speed).toBe(1.0);
+    });
+
+    test("host does not send state snapshot on peer-left", () => {
+      doCreateRoom();
+      overlayPosted = [];
+
+      serverSend({ type: "presence", event: "peer-left", role: "guest" });
+
+      expect(findOverlayPosted("ws-send")).toEqual([]);
+    });
+
+    test("guest does not send state snapshot on peer-joined", () => {
+      doJoinRoom();
+      overlayPosted = [];
+
+      serverSend({ type: "presence", event: "peer-joined", role: "host" });
+
+      // Guest should not send a state message
+      const sends = findOverlayPosted("ws-send");
+      const stateMsg = sends.find((s) => {
+        const parsed = JSON.parse(d(s).data as string) as Record<string, unknown>;
+        return parsed.type === "state";
+      });
+      expect(stateMsg).toBeUndefined();
+    });
+
+    test("host sends state snapshot on auth-ok with peerPresent", () => {
+      // Simulate host reconnecting when guest is already present
+      sidebarSend("create-room");
+
+      overlaySend("http-response", {
+        ok: true,
+        status: 200,
+        body: {
+          roomCode: "ABC123",
+          secret: "testsecret",
+          wsUrl: "wss://watchparty.example.com/ws/ABC123",
+          invite: "ABC123:testsecret",
+        },
+      });
+
+      overlaySend("ws-open");
+
+      coreStatus.position = 90.0;
+      coreStatus.paused = false;
+      coreStatus.speed = 1.5;
+      overlayPosted = [];
+
+      overlaySend("ws-message", {
+        data: JSON.stringify({
+          type: "auth-ok",
+          role: "host",
+          roomCode: "ABC123",
+          peerPresent: true,
+          expiresAtMs: Date.now() + 3600000,
+        }),
+      });
+
+      const sends = findOverlayPosted("ws-send");
+      const stateMsg = sends.find((s) => {
+        const parsed = JSON.parse(d(s).data as string) as Record<string, unknown>;
+        return parsed.type === "state";
+      });
+      expect(stateMsg).toBeDefined();
+      const parsed = JSON.parse(d(stateMsg).data as string) as Record<string, unknown>;
+      expect(parsed.reason).toBe("reconnect");
+      expect(parsed.positionMs).toBe(90000);
+      expect(parsed.paused).toBe(false);
+      expect(parsed.speed).toBe(1.5);
+    });
+
+    test("host does not send state on auth-ok without peer", () => {
+      doCreateRoom(); // peerPresent is false in doCreateRoom
+      overlayPosted = [];
+
+      // No state message should have been sent during auth-ok
+      // (doCreateRoom already completed, check there were no state sends)
+      const sends = findOverlayPosted("ws-send");
+      const stateMsg = sends.find((s) => {
+        const parsed = JSON.parse(d(s).data as string) as Record<string, unknown>;
+        return parsed.type === "state";
+      });
+      expect(stateMsg).toBeUndefined();
+    });
+
+    test("state snapshot includes protocol envelope fields", () => {
+      doCreateRoom();
+      overlayPosted = [];
+
+      serverSend({ type: "presence", event: "peer-joined", role: "guest" });
+
+      const msg = lastSentProtocol();
+      expect(msg).toBeDefined();
+      expect(msg!.protocolVersion).toBe(1);
+      expect(msg!.sessionId).toBeDefined();
+      expect(msg!.messageId).toBeDefined();
+      expect(msg!.tsMs).toBeGreaterThan(0);
+    });
+  });
+
   describe("warning messages", () => {
     test("shows warning on warning message", () => {
       doCreateRoom();

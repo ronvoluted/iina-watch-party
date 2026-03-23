@@ -165,6 +165,16 @@ function initSync(role: Role) {
   startHeartbeat();
 }
 
+function sendStateSnapshot(reason: "initial" | "reconnect") {
+  sendProtocol({
+    ...makeEnvelope("state"),
+    reason,
+    positionMs: getPositionMs(),
+    paused: core.status.paused ?? true,
+    speed: core.status.speed ?? 1,
+  });
+}
+
 function resetState() {
   transition("idle");
   room = null;
@@ -463,6 +473,10 @@ function onAuthOk(msg: Record<string, unknown>) {
 
   sidebar.postMessage("sb-status", { text: "Connected" });
   osd.show(`Watch Party: Connected to room ${room.roomCode}`);
+
+  if (role === "host" && peerPresent) {
+    sendStateSnapshot("reconnect");
+  }
 }
 
 function onAuthError(msg: Record<string, unknown>) {
@@ -488,6 +502,9 @@ function onPresence(msg: Record<string, unknown>) {
 
   if (event === "peer-joined" || event === "peer-replaced") {
     sidebar.postMessage("sb-peer", { present: true, name: "Peer connected" });
+    if (room?.role === "host") {
+      sendStateSnapshot("initial");
+    }
   } else if (event === "peer-left") {
     sidebar.postMessage("sb-peer", { present: false });
     osd.show("Watch Party: Peer disconnected");
