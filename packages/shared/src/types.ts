@@ -30,6 +30,16 @@ export type StateReason = "initial" | "reconnect" | "manual";
 export type WarningCode = "file-mismatch" | "peer-buffering" | "room-expiring";
 
 // ---------------------------------------------------------------------------
+// Participant info (returned in auth-ok and used for presence tracking)
+// ---------------------------------------------------------------------------
+
+export interface ParticipantInfo {
+  sessionId: string;
+  role: Role;
+  displayName?: string;
+}
+
+// ---------------------------------------------------------------------------
 // File metadata (sent during auth)
 // ---------------------------------------------------------------------------
 
@@ -94,7 +104,8 @@ export interface AuthOkMessage extends MessageEnvelope {
   role: Role;
   roomCode: string;
   expiresAtMs: number;
-  peerPresent: boolean;
+  /** All other connected participants at the time of auth. */
+  participants: ParticipantInfo[];
 }
 
 export interface AuthErrorMessage extends MessageEnvelope {
@@ -107,6 +118,10 @@ export interface PresenceMessage extends MessageEnvelope {
   type: "presence";
   event: PresenceEvent;
   role: Role;
+  /** Session ID of the participant this event is about. */
+  participantSessionId: string;
+  /** Display name of the participant, if available. */
+  displayName?: string;
 }
 
 export interface StateMessage extends MessageEnvelope {

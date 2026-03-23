@@ -75,21 +75,24 @@
   }
   .status-dot.connected { background: #34c759; }
 
-  .peer-info {
-    display: flex;
-    align-items: center;
-    gap: 6px;
+  .participants-list {
     font-size: 12px;
     color: #888;
   }
-  .peer-dot {
+  .participant-entry {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
+  }
+  .participant-dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #007aff;
     flex-shrink: 0;
   }
-  .peer-dot.offline { background: #8e8e93; }
+  .participant-dot.host { background: #34c759; }
+  .participant-dot.guest { background: #007aff; }
 
   .status-row {
     display: flex;
@@ -191,9 +194,8 @@
       <span class="status-dot connected" id="connected-dot"></span>
       <span id="connected-status">Connected</span>
     </div>
-    <div class="peer-info">
-      <span class="peer-dot" id="peer-dot"></span>
-      <span id="peer-name">Waiting for peer…</span>
+    <div id="participants-list" class="participants-list">
+      <span class="status-line">Waiting for peers…</span>
     </div>
   </div>
 

@@ -5,7 +5,7 @@
  * (transport bridge) and sidebar (UI) webviews.
  */
 
-import { parseInvite, PROTOCOL_VERSION, SyncEngine, type SyncEffect } from "@iina-watch-party/shared";
+import { parseInvite, PROTOCOL_VERSION, SyncEngine, type SyncEffect, type Role } from "@iina-watch-party/shared";
 
 const { overlay, sidebar, console: iinaConsole, core, preferences, osd } = iina;
 
@@ -58,6 +58,10 @@ let msgSeq = 0;
 let reconnecting = false;
 /** URL of the file loaded when the room session started, for mid-session change detection. */
 let sessionFileUrl: string | null = null;
+/** Tracks other participants in the room by sessionId. */
+const knownParticipants = new Map<string, { role: Role; displayName?: string }>();
+/** Session ID of the host participant (for filtering heartbeats). */
+let hostSessionId: string | null = null;
 
 const HEARTBEAT_INTERVAL_MS = 5000;
 
@@ -213,10 +217,13 @@ function resetState() {
   syncEngine = null;
   reconnecting = false;
   sessionFileUrl = null;
+  knownParticipants.clear();
+  hostSessionId = null;
   stopHeartbeat();
   setSidebarView("idle");
   sidebar.postMessage("sb-status", { text: "Not connected" });
   sidebar.postMessage("sb-warning", null);
+  sidebar.postMessage("sb-participants", { participants: [] });
 }
 
 function disconnect() {
@@ -496,11 +503,20 @@ function onAuthOk(msg: Record<string, unknown>) {
 
   const role = msg.role as Role;
   const roomCode = msg.roomCode as string | undefined;
-  const peerPresent = msg.peerPresent as boolean;
-  const peerDisplayName = msg.peerDisplayName as string | undefined;
+  const participants = (msg.participants as Array<{ sessionId: string; role: string; displayName?: string }>) ?? [];
 
   room.role = role;
   if (roomCode) room.roomCode = roomCode;
+
+  // Populate participant tracking
+  knownParticipants.clear();
+  hostSessionId = null;
+  for (const p of participants) {
+    knownParticipants.set(p.sessionId, { role: p.role as Role, displayName: p.displayName });
+    if (p.role === "host") hostSessionId = p.sessionId;
+  }
+  // If we are the host, record our own sessionId
+  if (role === "host") hostSessionId = sessionId;
 
   initSync(role);
   sessionFileUrl = core.status.url ?? null;
@@ -513,20 +529,23 @@ function onAuthOk(msg: Record<string, unknown>) {
     code: room.roomCode,
   });
 
-  const peerLabel = peerPresent
-    ? (peerDisplayName ? `${peerDisplayName} connected` : "Peer connected")
-    : undefined;
-  sidebar.postMessage("sb-peer", {
-    present: peerPresent ?? false,
-    name: peerLabel,
-  });
+  sendParticipantsToSidebar();
 
   sidebar.postMessage("sb-status", { text: "Connected" });
   osd.show(`Watch Party: Connected to room ${room.roomCode}`);
 
-  if (role === "host" && peerPresent) {
+  if (role === "host" && participants.length > 0) {
     sendStateSnapshot("reconnect");
   }
+}
+
+function sendParticipantsToSidebar() {
+  const list = Array.from(knownParticipants.entries()).map(([sid, p]) => ({
+    sessionId: sid,
+    role: p.role,
+    displayName: p.displayName,
+  }));
+  sidebar.postMessage("sb-participants", { participants: list });
 }
 
 function onAuthError(msg: Record<string, unknown>) {
@@ -541,25 +560,36 @@ function onAuthError(msg: Record<string, unknown>) {
 
 function onGoodbye(msg: Record<string, unknown>) {
   const reason = msg.reason as string | undefined;
+  const peerSid = msg.sessionId as string | undefined;
   logger.info(`Peer goodbye: reason=${reason ?? "unknown"}`);
-  sidebar.postMessage("sb-peer", { present: false });
+  if (peerSid) knownParticipants.delete(peerSid);
+  sendParticipantsToSidebar();
   osd.show("Watch Party: Peer left the room");
 }
 
 function onPresence(msg: Record<string, unknown>) {
   const event = msg.event as string;
-  logger.info(`Presence: ${event} (${String(msg.role)})`);
+  const peerSid = msg.participantSessionId as string | undefined;
+  const peerRole = (msg.role as Role) ?? "guest";
+  const peerDisplayName = msg.displayName as string | undefined;
+  logger.info(`Presence: ${event} (${peerRole}) sid=${peerSid ?? "?"}`);
 
   if (event === "peer-joined" || event === "peer-replaced") {
-    const peerName = msg.displayName as string | undefined;
-    const label = peerName ? `${peerName} connected` : "Peer connected";
-    sidebar.postMessage("sb-peer", { present: true, name: label });
+    if (peerSid) {
+      knownParticipants.set(peerSid, { role: peerRole, displayName: peerDisplayName });
+      if (peerRole === "host") hostSessionId = peerSid;
+    }
+    sendParticipantsToSidebar();
+    const label = peerDisplayName ?? "Peer";
+    osd.show(`Watch Party: ${label} joined`);
     if (room?.role === "host") {
       sendStateSnapshot("initial");
     }
   } else if (event === "peer-left") {
-    sidebar.postMessage("sb-peer", { present: false });
-    osd.show("Watch Party: Peer disconnected");
+    if (peerSid) knownParticipants.delete(peerSid);
+    sendParticipantsToSidebar();
+    const label = peerDisplayName ?? "Peer";
+    osd.show(`Watch Party: ${label} disconnected`);
   }
 }
 
@@ -609,9 +639,14 @@ function onRemotePlayback(msg: Record<string, unknown>) {
         nowMs,
       };
       break;
-    case "heartbeat":
+    case "heartbeat": {
+      const fromSid = msg.sessionId as string;
+      const fromRole = (knownParticipants.get(fromSid)?.role
+        ?? (fromSid === hostSessionId ? "host" : "guest")) as Role;
       action = {
         kind: "remote-heartbeat" as const,
+        fromSessionId: fromSid,
+        fromRole,
         positionMs: msg.positionMs as number,
         paused: msg.paused as boolean,
         speed: msg.speed as number,
@@ -620,6 +655,7 @@ function onRemotePlayback(msg: Record<string, unknown>) {
         nowMs,
       };
       break;
+    }
     default:
       return;
   }

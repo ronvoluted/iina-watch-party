@@ -51,7 +51,7 @@ function authPayload(
 ): string {
   return JSON.stringify({
     type: "auth",
-    protocolVersion: 1,
+    protocolVersion: 2,
     sessionId,
     messageId: crypto.randomUUID(),
     tsMs: Date.now(),
@@ -87,7 +87,7 @@ function makeMessage(
 ): string {
   return JSON.stringify({
     type,
-    protocolVersion: 1,
+    protocolVersion: 2,
     sessionId,
     messageId: crypto.randomUUID(),
     tsMs: Date.now(),
@@ -237,7 +237,7 @@ describe("E2E test matrix", () => {
 
       const authOk1 = msgs1.get().find((m) => m.type === "auth-ok");
       expect(authOk1!.role).toBe("host");
-      expect(authOk1!.peerPresent).toBe(false);
+      expect(authOk1!.participants).toEqual([]);
 
       const ws2 = await connectWs(roomCode);
       const msgs2 = collectMessages(ws2);
@@ -246,7 +246,10 @@ describe("E2E test matrix", () => {
 
       const authOk2 = msgs2.get().find((m) => m.type === "auth-ok");
       expect(authOk2!.role).toBe("guest");
-      expect(authOk2!.peerPresent).toBe(true);
+      const participants2 = authOk2!.participants as { sessionId: string; role: string }[];
+      expect(participants2.length).toBeGreaterThan(0);
+      expect(participants2[0]).toHaveProperty("sessionId");
+      expect(participants2[0]).toHaveProperty("role");
 
       // Host should receive peer-joined
       const presence = msgs1.get().find((m) => m.type === "presence");
@@ -257,28 +260,60 @@ describe("E2E test matrix", () => {
       ws2.close();
     });
 
-    it("rejects third participant (room full)", async () => {
+    it("accepts third participant as guest (MAX_PARTICIPANTS is 8)", async () => {
       const { roomCode } = await createRoom();
 
       const ws1 = await connectWs(roomCode);
-      ws1.send(authPayload("auth-full-h"));
+      ws1.send(authPayload("auth-multi-h"));
       await tick();
 
       const ws2 = await connectWs(roomCode);
-      ws2.send(authPayload("auth-full-g"));
+      ws2.send(authPayload("auth-multi-g1"));
       await tick();
 
       const ws3 = await connectWs(roomCode);
       const msgs3 = collectMessages(ws3);
-      ws3.send(authPayload("auth-full-third"));
+      ws3.send(authPayload("auth-multi-g2"));
       await tick();
 
-      const err = msgs3.get().find((m) => m.type === "auth-error");
-      expect(err).toBeDefined();
-      expect(err!.code).toBe("room-full");
+      const authOk = msgs3.get().find((m) => m.type === "auth-ok");
+      expect(authOk).toBeDefined();
+      expect(authOk!.role).toBe("guest");
+      const participants = authOk!.participants as { sessionId: string; role: string }[];
+      expect(participants.length).toBe(2); // host + first guest already present
 
       ws1.close();
       ws2.close();
+      ws3.close();
+    });
+
+    it("rejects participant when room is full", async () => {
+      // This test verifies the room-full error code is sent when MAX_PARTICIPANTS is reached.
+      // We don't connect 8+1 here; instead we rely on the server returning "Room is full"
+      // with code "room-full". This is a lightweight smoke test — full capacity testing
+      // belongs in unit tests for the room DO.
+      const { roomCode } = await createRoom();
+
+      const sockets: WebSocket[] = [];
+      // Connect 8 participants (1 host + 7 guests) to fill the room
+      for (let i = 0; i < 8; i++) {
+        const ws = await connectWs(roomCode);
+        ws.send(authPayload(`auth-full-${i}`));
+        await tick();
+        sockets.push(ws);
+      }
+
+      // 9th participant should be rejected
+      const wsExtra = await connectWs(roomCode);
+      const msgsExtra = collectMessages(wsExtra);
+      wsExtra.send(authPayload("auth-full-overflow"));
+      await tick();
+
+      const err = msgsExtra.get().find((m) => m.type === "auth-error");
+      expect(err).toBeDefined();
+      expect(err!.code).toBe("room-full");
+
+      for (const ws of sockets) ws.close();
     });
 
     it("allows reconnect with same sessionId after disconnect", async () => {
@@ -307,7 +342,10 @@ describe("E2E test matrix", () => {
       const authOk = msgs3.get().find((m) => m.type === "auth-ok");
       expect(authOk).toBeDefined();
       expect(authOk!.role).toBe("guest");
-      expect(authOk!.peerPresent).toBe(true);
+      const participants = authOk!.participants as { sessionId: string; role: string }[];
+      expect(participants.length).toBeGreaterThan(0);
+      expect(participants[0]).toHaveProperty("sessionId");
+      expect(participants[0]).toHaveProperty("role");
 
       ws1.close();
       ws3.close();
@@ -496,7 +534,7 @@ describe("E2E test matrix", () => {
       // 9KB payload exceeds 8KB limit
       const hugePayload = JSON.stringify({
         type: "play",
-        protocolVersion: 1,
+        protocolVersion: 2,
         sessionId: "val-size-host",
         messageId: crypto.randomUUID(),
         tsMs: Date.now(),
@@ -1062,7 +1100,7 @@ describe("E2E test matrix", () => {
       // auth-ok is server-originated
       const authOk = msgs.get().find((m) => m.type === "auth-ok");
       expect(authOk).toBeDefined();
-      expect(authOk!.protocolVersion).toBe(1);
+      expect(authOk!.protocolVersion).toBe(2);
       expect(authOk!.sessionId).toBe("server");
       expect(typeof authOk!.messageId).toBe("string");
       expect((authOk!.messageId as string).length).toBeGreaterThan(0);
@@ -1080,7 +1118,7 @@ describe("E2E test matrix", () => {
 
       const err = hostMsgs.get().find((m) => m.type === "error");
       expect(err).toBeDefined();
-      expect(err!.protocolVersion).toBe(1);
+      expect(err!.protocolVersion).toBe(2);
       expect(err!.sessionId).toBe("server");
       expect(typeof err!.messageId).toBe("string");
       expect(typeof err!.tsMs).toBe("number");
@@ -1104,7 +1142,7 @@ describe("E2E test matrix", () => {
 
       const presence = msgs1.get().find((m) => m.type === "presence");
       expect(presence).toBeDefined();
-      expect(presence!.protocolVersion).toBe(1);
+      expect(presence!.protocolVersion).toBe(2);
       expect(presence!.sessionId).toBe("server");
       expect(typeof presence!.messageId).toBe("string");
       expect(typeof presence!.tsMs).toBe("number");

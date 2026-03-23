@@ -22,8 +22,8 @@ const ROOM_CODE_LENGTH = 6;
 const ROOM_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
 const MAX_MESSAGE_SIZE_BYTES = 8192;
-const PROTOCOL_VERSION = 1;
-const MAX_PARTICIPANTS = 2;
+const PROTOCOL_VERSION = 2;
+const MAX_PARTICIPANTS = 8;
 
 /** Duration tolerance for file mismatch detection (5 seconds). */
 const FILE_DURATION_TOLERANCE_MS = 5000;
@@ -447,7 +447,6 @@ export class Room extends DurableObject {
       }
 
       this.setAuthenticated(ws, att, sessionId, role, file, displayName);
-      const peerPresent = connectedPeers.length > 0;
 
       roomLog("info", "Auth OK (reconnect)", {
         roomCode,
@@ -456,21 +455,30 @@ export class Room extends DurableObject {
         replaced: wasReplaced,
       });
 
+      const participants = connectedPeers.map((p) => ({
+        sessionId: p.att.sessionId,
+        role: p.att.role,
+        displayName: p.att.displayName,
+      }));
+
       this.sendServerMessage(ws, "auth-ok", {
         role,
         roomCode,
         expiresAtMs,
-        peerPresent,
-        peerDisplayName: peerPresent ? connectedPeers[0].att.displayName : undefined,
+        participants,
       });
 
-      if (peerPresent) {
-        this.sendServerMessage(connectedPeers[0].ws, "presence", {
-          event: wasReplaced ? "peer-replaced" : "peer-joined",
-          role,
-          displayName,
-        });
-        this.checkAndWarnFileMismatch(ws, connectedPeers[0].ws);
+      if (connectedPeers.length > 0) {
+        const event = wasReplaced ? "peer-replaced" : "peer-joined";
+        for (const peer of connectedPeers) {
+          this.sendServerMessage(peer.ws, "presence", {
+            event,
+            role,
+            participantSessionId: sessionId,
+            displayName,
+          });
+        }
+        this.checkAndWarnFileMismatch(ws, connectedPeers);
       }
       return;
     }
@@ -494,7 +502,7 @@ export class Room extends DurableObject {
       roomLog("warn", "Auth rejected: room full", { roomCode, sessionId });
       this.sendServerMessage(ws, "auth-error", {
         code: "room-full",
-        message: "Room already has two participants",
+        message: "Room is full",
       });
       ws.close(4005, "Room full");
       return;
@@ -511,25 +519,32 @@ export class Room extends DurableObject {
     );
 
     this.setAuthenticated(ws, att, sessionId, role, file, displayName);
-    const peerPresent = connectedPeers.length > 0;
 
     roomLog("info", "Auth OK (new)", { roomCode, sessionId, role });
+
+    const participants = connectedPeers.map((p) => ({
+      sessionId: p.att.sessionId,
+      role: p.att.role,
+      displayName: p.att.displayName,
+    }));
 
     this.sendServerMessage(ws, "auth-ok", {
       role,
       roomCode,
       expiresAtMs,
-      peerPresent,
-      peerDisplayName: peerPresent ? connectedPeers[0].att.displayName : undefined,
+      participants,
     });
 
-    if (peerPresent) {
-      this.sendServerMessage(connectedPeers[0].ws, "presence", {
-        event: "peer-joined",
-        role,
-        displayName,
-      });
-      this.checkAndWarnFileMismatch(ws, connectedPeers[0].ws);
+    if (connectedPeers.length > 0) {
+      for (const peer of connectedPeers) {
+        this.sendServerMessage(peer.ws, "presence", {
+          event: "peer-joined",
+          role,
+          participantSessionId: sessionId,
+          displayName,
+        });
+      }
+      this.checkAndWarnFileMismatch(ws, connectedPeers);
     }
   }
 
@@ -662,29 +677,40 @@ export class Room extends DurableObject {
   }
 
   /**
-   * Compare file metadata between two peers and send a file-mismatch warning
-   * to both if they appear to be watching different files.
+   * Compare the new joiner's file metadata against the host's and warn
+   * the new joiner if they appear to be watching a different file.
    */
-  private checkAndWarnFileMismatch(wsA: WebSocket, wsB: WebSocket): void {
-    const fileA = this.getAttachment(wsA).file;
-    const fileB = this.getAttachment(wsB).file;
-    if (!fileA || !fileB) return;
+  private checkAndWarnFileMismatch(
+    newWs: WebSocket,
+    existingPeers: { ws: WebSocket; att: WsAttachment }[],
+  ): void {
+    const newFile = this.getAttachment(newWs).file;
+    if (!newFile) return;
+
+    // Find the host among existing peers; if the new joiner IS the host,
+    // compare against all existing peers instead.
+    const newAtt = this.getAttachment(newWs);
+    const refPeer = newAtt.role === "host"
+      ? existingPeers[0] // host just joined — compare against first existing peer
+      : existingPeers.find((p) => p.att.role === "host");
+    if (!refPeer) return;
+
+    const refFile = refPeer.att.file;
+    if (!refFile) return;
 
     let nameMismatch = false;
     let durationDiffStr: string | null = null;
 
-    // Filename comparison
     if (
-      fileA.name != null && fileB.name != null &&
-      fileA.name !== "" && fileB.name !== "" &&
-      fileA.name !== fileB.name
+      newFile.name != null && refFile.name != null &&
+      newFile.name !== "" && refFile.name !== "" &&
+      newFile.name !== refFile.name
     ) {
       nameMismatch = true;
     }
 
-    // Duration comparison
-    if (fileA.durationMs != null && fileB.durationMs != null) {
-      const diff = Math.abs(fileA.durationMs - fileB.durationMs);
+    if (newFile.durationMs != null && refFile.durationMs != null) {
+      const diff = Math.abs(newFile.durationMs - refFile.durationMs);
       if (diff > FILE_DURATION_TOLERANCE_MS) {
         durationDiffStr = `${Math.round(diff / 1000)}s`;
       }
@@ -700,8 +726,8 @@ export class Room extends DurableObject {
     } else {
       message = "<strong>Warning:</strong> durations of videos being watched do not match";
     }
-    this.sendServerMessage(wsA, "warning", { code: "file-mismatch", message });
-    this.sendServerMessage(wsB, "warning", { code: "file-mismatch", message });
+    this.sendServerMessage(newWs, "warning", { code: "file-mismatch", message });
+    this.sendServerMessage(refPeer.ws, "warning", { code: "file-mismatch", message });
   }
 
   private relayToPeer(fromWs: WebSocket, message: string): void {
@@ -755,6 +781,8 @@ export class Room extends DurableObject {
         this.sendServerMessage(ws, "presence", {
           event: "peer-left",
           role: closedAtt.role,
+          participantSessionId: closedAtt.sessionId,
+          displayName: closedAtt.displayName,
         });
       }
     }

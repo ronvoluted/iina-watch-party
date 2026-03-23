@@ -300,6 +300,8 @@ describe("drift correction", () => {
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 13000,
       paused: false,
       speed: 1,
@@ -319,6 +321,8 @@ describe("drift correction", () => {
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 11000,
       paused: false,
       speed: 1,
@@ -337,6 +341,8 @@ describe("drift correction", () => {
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 50000,
       paused: false,
       speed: 1,
@@ -355,6 +361,8 @@ describe("drift correction", () => {
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 50000,
       paused: false,
       speed: 1,
@@ -373,6 +381,8 @@ describe("drift correction", () => {
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 50000,
       paused: false,
       speed: 1,
@@ -391,6 +401,8 @@ describe("drift correction", () => {
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 50000,
       paused: false,
       speed: 1,
@@ -408,6 +420,8 @@ describe("drift correction", () => {
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 50000,
       paused: true,
       speed: 1,
@@ -425,6 +439,8 @@ describe("drift correction", () => {
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 50000,
       paused: false,
       speed: 1,
@@ -443,6 +459,8 @@ describe("drift correction", () => {
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 50000,
       paused: false,
       speed: 1,
@@ -461,6 +479,8 @@ describe("drift correction", () => {
 
     engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 15000,
       paused: false,
       speed: 1,
@@ -486,6 +506,8 @@ describe("speed correction via heartbeat", () => {
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 10000,
       paused: false,
       speed: 1.5,
@@ -503,6 +525,8 @@ describe("speed correction via heartbeat", () => {
 
     engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 0,
       paused: false,
       speed: 2,
@@ -522,6 +546,8 @@ describe("speed correction via heartbeat", () => {
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 50000,
       paused: false,
       speed: 2,
@@ -543,6 +569,8 @@ describe("speed correction via heartbeat", () => {
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 10500,
       paused: false,
       speed: 1,
@@ -619,6 +647,8 @@ describe("realistic sequences", () => {
     // Host heartbeat shows drift
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 15000,
       paused: false,
       speed: 1,
@@ -634,6 +664,8 @@ describe("realistic sequences", () => {
     // At T+5000, estimated = 15000 + 5000*1 = 20000, host at 20500 → drift 500 < 2000
     const nextEffects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 20500,
       paused: false,
       speed: 1,
@@ -690,6 +722,8 @@ describe("drift correction boundary", () => {
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 12000, // exactly 2000ms drift
       paused: false,
       speed: 1,
@@ -707,6 +741,8 @@ describe("drift correction boundary", () => {
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 12001,
       paused: false,
       speed: 1,
@@ -725,6 +761,8 @@ describe("drift correction boundary", () => {
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 15000, // guest is 5s ahead
       paused: false,
       speed: 1,
@@ -941,6 +979,8 @@ describe("position estimation", () => {
     // Host at 15500 → drift = 500 < 2000 → no correction
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 15500,
       paused: false,
       speed: 1,
@@ -960,6 +1000,8 @@ describe("position estimation", () => {
     // Host at 18000 → drift = 3000 > 2000 → correction
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 18000,
       paused: false,
       speed: 1,
@@ -999,6 +1041,8 @@ describe("correction cooldown", () => {
     // First correction triggers
     const e1 = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 15000,
       paused: false,
       speed: 1,
@@ -1011,6 +1055,8 @@ describe("correction cooldown", () => {
     engine.lastUpdateMs = T + 3000;
     const e2 = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 25000,
       paused: false,
       speed: 1,
@@ -1031,6 +1077,8 @@ describe("correction cooldown", () => {
     // First correction
     engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 15000,
       paused: false,
       speed: 1,
@@ -1042,6 +1090,8 @@ describe("correction cooldown", () => {
     engine.lastUpdateMs = T + 5000;
     const e2 = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 20000,
       paused: false,
       speed: 1,
@@ -1064,6 +1114,8 @@ describe("correction cooldown", () => {
     // Trigger a correction to start cooldown
     engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 15000,
       paused: false,
       speed: 1,
@@ -1074,6 +1126,8 @@ describe("correction cooldown", () => {
     engine.state.speed = 1;
     const e2 = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 15100,
       paused: false,
       speed: 2,
@@ -1095,6 +1149,8 @@ describe("correction cooldown", () => {
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 15000,
       paused: false,
       speed: 1,
@@ -1154,6 +1210,8 @@ describe("position tracking", () => {
 
     engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 15000,
       paused: false,
       speed: 1,
@@ -1220,6 +1278,8 @@ describe("buffering behavior", () => {
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 20000,
       paused: false,
       speed: 1,
@@ -1237,6 +1297,8 @@ describe("buffering behavior", () => {
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 20000,
       paused: false,
       speed: 1,
@@ -1256,6 +1318,8 @@ describe("buffering behavior", () => {
     // While buffering — no correction
     engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 20000,
       paused: false,
       speed: 1,
@@ -1270,6 +1334,8 @@ describe("buffering behavior", () => {
     // Now correction should apply
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 20000,
       paused: false,
       speed: 1,
@@ -1293,6 +1359,8 @@ describe("peer-buffering warnings", () => {
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 10000,
       paused: false,
       speed: 1,
@@ -1305,18 +1373,21 @@ describe("peer-buffering warnings", () => {
       | undefined;
     expect(warn).toBeDefined();
     expect(warn!.active).toBe(true);
-    expect(engine.peerBuffering).toBe(true);
+    // peerBuffering is now tracked internally per-peer
   });
 
   test("guest emits warn-peer-buffering active=false when peer stops buffering", () => {
     const engine = new SyncEngine("guest");
-    engine.peerBuffering = true;
+    // Pre-set peer as buffering via a heartbeat
+    engine.apply({ kind: "remote-heartbeat", fromSessionId: "peer-1", fromRole: "host", positionMs: 0, paused: false, speed: 1, buffering: true, nowMs: 0 });
     engine.state.paused = false;
     engine.state.positionMs = 10000;
     engine.lastUpdateMs = T;
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 10000,
       paused: false,
       speed: 1,
@@ -1329,18 +1400,20 @@ describe("peer-buffering warnings", () => {
       | undefined;
     expect(warn).toBeDefined();
     expect(warn!.active).toBe(false);
-    expect(engine.peerBuffering).toBe(false);
+    // peerBuffering is now tracked internally per-peer
   });
 
   test("no warning when peer buffering state unchanged", () => {
     const engine = new SyncEngine("guest");
-    engine.peerBuffering = false;
+    // Peer not buffering (default state, no setup needed)
     engine.state.paused = false;
     engine.state.positionMs = 10000;
     engine.lastUpdateMs = T;
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 10000,
       paused: false,
       speed: 1,
@@ -1356,6 +1429,8 @@ describe("peer-buffering warnings", () => {
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "guest",
       positionMs: 10000,
       paused: false,
       speed: 1,
@@ -1378,6 +1453,8 @@ describe("peer-buffering warnings", () => {
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "guest",
       positionMs: 20000,
       paused: false,
       speed: 1,
@@ -1392,13 +1469,16 @@ describe("peer-buffering warnings", () => {
 
   test("peer-buffering defaults to false when heartbeat omits buffering field", () => {
     const engine = new SyncEngine("guest");
-    engine.peerBuffering = true;
+    // Pre-set peer as buffering via a heartbeat
+    engine.apply({ kind: "remote-heartbeat", fromSessionId: "peer-1", fromRole: "host", positionMs: 0, paused: false, speed: 1, buffering: true, nowMs: 0 });
     engine.state.paused = false;
     engine.state.positionMs = 10000;
     engine.lastUpdateMs = T;
 
     const effects = engine.apply({
       kind: "remote-heartbeat",
+      fromSessionId: "peer-1",
+      fromRole: "host",
       positionMs: 10000,
       paused: false,
       speed: 1,

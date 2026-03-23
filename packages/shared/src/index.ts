@@ -4,11 +4,12 @@
  * Protocol types, runtime validation, sync state machine, and shared utilities.
  */
 
-export { PROTOCOL_VERSION, MAX_MESSAGE_SIZE_BYTES, ROOM_CODE_LENGTH } from "./constants.js";
+export { PROTOCOL_VERSION, MAX_MESSAGE_SIZE_BYTES, ROOM_CODE_LENGTH, MAX_PARTICIPANTS } from "./constants.js";
 
 export type {
   MessageEnvelope,
   Role,
+  ParticipantInfo,
   PresenceEvent,
   SeekCause,
   StateReason,

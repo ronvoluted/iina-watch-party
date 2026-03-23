@@ -37,7 +37,7 @@ function authPayload(
 ): string {
   return JSON.stringify({
     type: "auth",
-    protocolVersion: 1,
+    protocolVersion: 2,
     sessionId,
     messageId: crypto.randomUUID(),
     tsMs: Date.now(),
@@ -67,7 +67,7 @@ function makeMessage(
 ): string {
   return JSON.stringify({
     type,
-    protocolVersion: 1,
+    protocolVersion: 2,
     sessionId,
     messageId: crypto.randomUUID(),
     tsMs: Date.now(),
@@ -198,7 +198,7 @@ describe("Worker runtime", () => {
 
       const authOk = msgs.get().find((m) => m.type === "auth-ok");
       expect(authOk).toBeDefined();
-      expect(authOk!.protocolVersion).toBe(1);
+      expect(authOk!.protocolVersion).toBe(2);
       expect(authOk!.sessionId).toBe("server");
       expect(typeof authOk!.messageId).toBe("string");
       expect((authOk!.messageId as string).length).toBeGreaterThan(0);
@@ -219,7 +219,7 @@ describe("Worker runtime", () => {
 
       const err = msgs.get().find((m) => m.type === "error");
       expect(err).toBeDefined();
-      expect(err!.protocolVersion).toBe(1);
+      expect(err!.protocolVersion).toBe(2);
       expect(err!.sessionId).toBe("server");
       expect(typeof err!.messageId).toBe("string");
       expect(typeof err!.tsMs).toBe("number");
@@ -356,7 +356,7 @@ describe("Worker runtime", () => {
       const msgs = collectMessages(ws);
       ws.send(
         JSON.stringify({
-          protocolVersion: 1,
+          protocolVersion: 2,
           sessionId: "session-nrt-2",
           messageId: crypto.randomUUID(),
           tsMs: Date.now(),
@@ -479,7 +479,8 @@ describe("Worker runtime", () => {
       const authOk = msgs3.get().find((m) => m.type === "auth-ok");
       expect(authOk).toBeDefined();
       expect(authOk!.role).toBe("guest");
-      expect(authOk!.peerPresent).toBe(true);
+      expect(authOk!.participants).toBeInstanceOf(Array);
+      expect(authOk!.participants.length).toBeGreaterThan(0);
 
       // Relay works with new guest
       msgs3.get().length = 0;

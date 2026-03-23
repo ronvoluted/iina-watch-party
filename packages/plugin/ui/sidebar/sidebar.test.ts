@@ -14,6 +14,7 @@ let posted: Array<{ name: string; data: unknown }>;
 interface MockElement {
   id: string;
   textContent: string;
+  innerHTML: string;
   value: string;
   classList: {
     _classes: Set<string>;
@@ -32,6 +33,7 @@ function makeMockElement(id: string, initialClasses: string[] = []): MockElement
   return {
     id,
     textContent: "",
+    innerHTML: "",
     value: "",
     classList: {
       _classes: classes,
@@ -69,7 +71,7 @@ function setupGlobals() {
     "view-idle", "view-connecting", "view-connected", "view-error",
     "idle-status", "invite-input", "connecting-text",
     "connected-status", "room-code", "invite-section",
-    "peer-dot", "peer-name", "warning-section", "warning-text",
+    "participants-list", "warning-section", "warning-text",
     "error-text",
     "btn-create", "btn-join", "btn-copy-invite", "btn-leave", "btn-back",
   ];
@@ -139,7 +141,7 @@ describe("sidebar shell", () => {
     test("registers all expected message handlers", () => {
       expect(handlers["sb-state"]).toBeDefined();
       expect(handlers["sb-room"]).toBeDefined();
-      expect(handlers["sb-peer"]).toBeDefined();
+      expect(handlers["sb-participants"]).toBeDefined();
       expect(handlers["sb-warning"]).toBeDefined();
       expect(handlers["sb-error"]).toBeDefined();
       expect(handlers["sb-status"]).toBeDefined();
@@ -263,22 +265,21 @@ describe("sidebar shell", () => {
     });
   });
 
-  describe("sb-peer updates", () => {
-    test("shows peer as connected", () => {
-      send("sb-peer", { present: true, name: "Alice" });
-      expect(elements["peer-name"].textContent).toBe("Alice");
-      expect(elements["peer-dot"].classList.contains("offline")).toBe(false);
+  describe("sb-participants updates", () => {
+    test("shows participant as connected", () => {
+      send("sb-participants", { participants: [{ sessionId: "peer-session", role: "guest", displayName: "Alice" }] });
+      expect(elements["participants-list"].innerHTML).toContain("Alice");
+      expect(elements["participants-list"].innerHTML).toContain("participant-entry");
     });
 
-    test("shows peer as disconnected", () => {
-      send("sb-peer", { present: false });
-      expect(elements["peer-name"].textContent).toContain("Waiting");
-      expect(elements["peer-dot"].classList.contains("offline")).toBe(true);
+    test("shows no participants as waiting", () => {
+      send("sb-participants", { participants: [] });
+      expect(elements["participants-list"].innerHTML).toContain("Waiting for peers");
     });
 
-    test("uses default name when peer present without name", () => {
-      send("sb-peer", { present: true });
-      expect(elements["peer-name"].textContent).toBe("Peer connected");
+    test("uses default name when participant has no displayName", () => {
+      send("sb-participants", { participants: [{ sessionId: "peer-session", role: "guest" }] });
+      expect(elements["participants-list"].innerHTML).toContain("Guest");
     });
   });
 

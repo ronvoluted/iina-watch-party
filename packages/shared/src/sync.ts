@@ -65,6 +65,8 @@ export type SyncAction =
     }
   | {
       kind: "remote-heartbeat";
+      fromSessionId: string;
+      fromRole: Role;
       positionMs: number;
       paused: boolean;
       speed: number;
@@ -111,8 +113,8 @@ export class SyncEngine {
   lastUpdateMs: number = 0;
   /** Timestamp (ms) of the last corrective seek. Used for cooldown. */
   lastCorrectionMs: number = Number.NEGATIVE_INFINITY;
-  /** Whether the remote peer is currently buffering (from heartbeats). */
-  peerBuffering: boolean = false;
+  /** Session IDs of peers currently buffering (from heartbeats). */
+  private bufferingPeers: Set<string> = new Set();
 
   constructor(role: Role, config: Partial<SyncConfig> = {}) {
     this.role = role;
@@ -310,6 +312,8 @@ export class SyncEngine {
   // -------------------------------------------------------------------------
 
   private onRemoteHeartbeat(a: {
+    fromSessionId: string;
+    fromRole: Role;
     positionMs: number;
     paused: boolean;
     speed: number;
@@ -319,15 +323,22 @@ export class SyncEngine {
   }): SyncEffect[] {
     const effects: SyncEffect[] = [];
 
-    // Track peer buffering state transitions (both roles)
+    // Track per-peer buffering state; emit UI effect on aggregate change
     const peerNowBuffering = a.buffering ?? false;
-    if (peerNowBuffering !== this.peerBuffering) {
-      this.peerBuffering = peerNowBuffering;
-      effects.push({ type: "warn-peer-buffering", active: peerNowBuffering });
+    const wasBefore = this.bufferingPeers.size > 0;
+    if (peerNowBuffering) {
+      this.bufferingPeers.add(a.fromSessionId);
+    } else {
+      this.bufferingPeers.delete(a.fromSessionId);
+    }
+    const isNow = this.bufferingPeers.size > 0;
+    if (isNow !== wasBefore) {
+      effects.push({ type: "warn-peer-buffering", active: isNow });
     }
 
-    // Only guest performs drift correction
+    // Only guest performs drift correction, and only from host heartbeats
     if (this.role !== "guest") return effects;
+    if (a.fromRole !== "host") return effects;
 
     // Speed mismatch: correct speed first
     if (this.state.speed !== a.speed) {

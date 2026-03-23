@@ -40,7 +40,7 @@ function authPayload(
 ): string {
   return JSON.stringify({
     type: "auth",
-    protocolVersion: 1,
+    protocolVersion: 2,
     sessionId,
     messageId: crypto.randomUUID(),
     tsMs: Date.now(),
@@ -75,7 +75,7 @@ function makeMessage(
 ): string {
   return JSON.stringify({
     type,
-    protocolVersion: 1,
+    protocolVersion: 2,
     sessionId,
     messageId: crypto.randomUUID(),
     tsMs: Date.now(),
@@ -105,8 +105,8 @@ describe("Room WebSocket lifecycle", () => {
       expect(authOk).toBeDefined();
       expect(authOk!.role).toBe("host");
       expect(authOk!.roomCode).toBe(roomCode);
-      expect(authOk!.peerPresent).toBe(false);
-      expect(authOk!.protocolVersion).toBe(1);
+      expect(authOk!.participants).toEqual([]);
+      expect(authOk!.protocolVersion).toBe(2);
       expect(authOk!.sessionId).toBe("server");
 
       ws.close();
@@ -128,7 +128,16 @@ describe("Room WebSocket lifecycle", () => {
       const authOk2 = msgs2.get().find((m) => m.type === "auth-ok");
       expect(authOk2).toBeDefined();
       expect(authOk2!.role).toBe("guest");
-      expect(authOk2!.peerPresent).toBe(true);
+      expect(authOk2!.participants).toBeInstanceOf(Array);
+      expect(
+        (authOk2!.participants as { sessionId: string; role: string }[]).length,
+      ).toBeGreaterThan(0);
+      expect(
+        (authOk2!.participants as { sessionId: string; role: string }[])[0],
+      ).toHaveProperty("sessionId");
+      expect(
+        (authOk2!.participants as { sessionId: string; role: string }[])[0],
+      ).toHaveProperty("role");
 
       // Host should receive presence notification
       const presence = msgs1.get().find((m) => m.type === "presence");
@@ -148,7 +157,7 @@ describe("Room WebSocket lifecycle", () => {
       ws.send(
         JSON.stringify({
           type: "auth",
-          protocolVersion: 1,
+          protocolVersion: 2,
           sessionId: "",
           messageId: crypto.randomUUID(),
           tsMs: Date.now(),
@@ -176,10 +185,10 @@ describe("Room WebSocket lifecycle", () => {
     });
   });
 
-  // ── Third participant rejection ────────────────────────────
+  // ── Participant limits ────────────────────────────────────
 
   describe("participant limits", () => {
-    it("rejects a third participant", async () => {
+    it("allows a third participant", async () => {
       const { roomCode } = await createRoom();
 
       const ws1 = await connectWs(roomCode);
@@ -195,12 +204,17 @@ describe("Room WebSocket lifecycle", () => {
       ws3.send(authPayload("session-p3"));
       await tick();
 
-      const authErr = msgs3.get().find((m) => m.type === "auth-error");
-      expect(authErr).toBeDefined();
-      expect(authErr!.code).toBe("room-full");
+      const authOk = msgs3.get().find((m) => m.type === "auth-ok");
+      expect(authOk).toBeDefined();
+      expect(authOk!.role).toBe("guest");
+      expect(authOk!.participants).toBeInstanceOf(Array);
+      expect(
+        (authOk!.participants as { sessionId: string; role: string }[]).length,
+      ).toBeGreaterThan(0);
 
       ws1.close();
       ws2.close();
+      ws3.close();
     });
   });
 
@@ -231,7 +245,16 @@ describe("Room WebSocket lifecycle", () => {
       const authOk = msgs3.get().find((m) => m.type === "auth-ok");
       expect(authOk).toBeDefined();
       expect(authOk!.role).toBe("host");
-      expect(authOk!.peerPresent).toBe(true);
+      expect(authOk!.participants).toBeInstanceOf(Array);
+      expect(
+        (authOk!.participants as { sessionId: string; role: string }[]).length,
+      ).toBeGreaterThan(0);
+      expect(
+        (authOk!.participants as { sessionId: string; role: string }[])[0],
+      ).toHaveProperty("sessionId");
+      expect(
+        (authOk!.participants as { sessionId: string; role: string }[])[0],
+      ).toHaveProperty("role");
 
       // Guest receives peer-replaced
       const presence = msgs2.get().find((m) => m.type === "presence");

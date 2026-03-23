@@ -35,11 +35,16 @@ const connectingText = document.getElementById("connecting-text");
 const connectedStatus = document.getElementById("connected-status");
 const roomCode = document.getElementById("room-code");
 const inviteSection = document.getElementById("invite-section");
-const peerDot = document.getElementById("peer-dot");
-const peerName = document.getElementById("peer-name");
+const participantsList = document.getElementById("participants-list");
 const warningSection = document.getElementById("warning-section");
 const warningText = document.getElementById("warning-text");
 const errorText = document.getElementById("error-text");
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+function escapeHtml(str) {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
 
 // ── State ───────────────────────────────────────────────────────────
 
@@ -122,11 +127,21 @@ iina.onMessage("sb-room", function (data) {
   if (data.code) roomCode.textContent = data.code;
 });
 
-iina.onMessage("sb-peer", function (data) {
-  if (!data) return;
-  const present = !!data.present;
-  peerDot.classList.toggle("offline", !present);
-  peerName.textContent = present ? (data.name || "Peer connected") : "Waiting for peer\u2026";
+iina.onMessage("sb-participants", function (data) {
+  if (!data || !participantsList) return;
+  const list = data.participants || [];
+  if (list.length === 0) {
+    participantsList.innerHTML = '<span class="status-line">Waiting for peers\u2026</span>';
+    return;
+  }
+  participantsList.innerHTML = list.map(function (p) {
+    const name = escapeHtml(p.displayName || (p.role === "host" ? "Host" : "Guest"));
+    const dotClass = "participant-dot " + (p.role === "host" ? "host" : "guest");
+    return '<div class="participant-entry">' +
+      '<span class="' + dotClass + '"></span>' +
+      '<span>' + name + '</span>' +
+      '</div>';
+  }).join('');
 });
 
 iina.onMessage("sb-warning", function (data) {
