@@ -5,7 +5,7 @@
  * (transport bridge) and sidebar (UI) webviews.
  */
 
-import { parseInvite, PROTOCOL_VERSION } from "@iina-watch-party/shared";
+import { parseInvite, PROTOCOL_VERSION, SyncEngine, type SyncEffect } from "@iina-watch-party/shared";
 
 const { overlay, sidebar, console: log, core, preferences, osd } = iina;
 
@@ -37,8 +37,12 @@ interface FileMetadata {
 
 let connState: ConnectionState = "idle";
 let room: RoomContext | null = null;
+let syncEngine: SyncEngine | null = null;
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 const sessionId = `s-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 let msgSeq = 0;
+
+const HEARTBEAT_INTERVAL_MS = 5000;
 
 // ── Preferences ────────────────────────────────────────────────────
 
@@ -98,9 +102,74 @@ function toWsUrl(backendUrl: string, roomCode: string): string {
   return backendUrl.replace(/^http/, "ws") + `/ws/${roomCode}`;
 }
 
+function getPositionMs(): number {
+  return Math.round((core.status.position ?? 0) * 1000);
+}
+
+function executeEffects(effects: SyncEffect[]) {
+  for (const effect of effects) {
+    switch (effect.type) {
+      case "seek":
+        core.seekTo(effect.positionMs / 1000);
+        break;
+      case "set-paused":
+        if (effect.paused) core.pause();
+        else core.resume();
+        break;
+      case "set-speed":
+        core.setSpeed(effect.speed);
+        break;
+      case "send-play":
+        sendProtocol({ ...makeEnvelope("play"), positionMs: effect.positionMs });
+        break;
+      case "send-pause":
+        sendProtocol({ ...makeEnvelope("pause"), positionMs: effect.positionMs });
+        break;
+      case "send-seek":
+        sendProtocol({
+          ...makeEnvelope("seek"),
+          positionMs: effect.positionMs,
+          cause: effect.cause,
+        });
+        break;
+      case "send-speed":
+        sendProtocol({ ...makeEnvelope("speed"), speed: effect.speed });
+        break;
+    }
+  }
+}
+
+function startHeartbeat() {
+  stopHeartbeat();
+  heartbeatTimer = setInterval(() => {
+    if (connState !== "connected") return;
+    sendProtocol({
+      ...makeEnvelope("heartbeat"),
+      positionMs: getPositionMs(),
+      paused: core.status.paused ?? false,
+      speed: core.status.speed ?? 1,
+    });
+  }, HEARTBEAT_INTERVAL_MS);
+}
+
+function stopHeartbeat() {
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+}
+
+function initSync(role: Role) {
+  const driftThresholdMs = (preferences.get("driftThresholdMs") as number) ?? 2000;
+  syncEngine = new SyncEngine(role, { driftThresholdMs });
+  startHeartbeat();
+}
+
 function resetState() {
   transition("idle");
   room = null;
+  syncEngine = null;
+  stopHeartbeat();
   setSidebarView("idle");
   sidebar.postMessage("sb-status", { text: "Not connected" });
 }
@@ -337,6 +406,24 @@ function handleServerMessage(msg: Record<string, unknown>) {
     case "error":
       onServerError(msg);
       break;
+    case "play":
+      onRemotePlayback(msg);
+      break;
+    case "pause":
+      onRemotePlayback(msg);
+      break;
+    case "seek":
+      onRemotePlayback(msg);
+      break;
+    case "speed":
+      onRemotePlayback(msg);
+      break;
+    case "state":
+      onRemotePlayback(msg);
+      break;
+    case "heartbeat":
+      onRemotePlayback(msg);
+      break;
     default:
       log.log(`Unhandled message type: ${String(msg.type)}`);
       break;
@@ -352,6 +439,8 @@ function onAuthOk(msg: Record<string, unknown>) {
 
   room.role = role;
   if (roomCode) room.roomCode = roomCode;
+
+  initSync(role);
 
   log.log(`Authenticated as ${role} in room ${room.roomCode}`);
   transition("connected");
@@ -403,3 +492,78 @@ function onServerError(msg: Record<string, unknown>) {
     text: (msg.message as string) ?? "Server error",
   });
 }
+
+function onRemotePlayback(msg: Record<string, unknown>) {
+  if (!syncEngine || connState !== "connected") return;
+  const nowMs = Date.now();
+  const type = msg.type as string;
+
+  let action;
+  switch (type) {
+    case "play":
+      action = { kind: "remote-play" as const, positionMs: msg.positionMs as number, nowMs };
+      break;
+    case "pause":
+      action = { kind: "remote-pause" as const, positionMs: msg.positionMs as number, nowMs };
+      break;
+    case "seek":
+      action = { kind: "remote-seek" as const, positionMs: msg.positionMs as number, nowMs };
+      break;
+    case "speed":
+      action = { kind: "remote-speed" as const, speed: msg.speed as number, nowMs };
+      break;
+    case "state":
+      action = {
+        kind: "remote-state" as const,
+        positionMs: msg.positionMs as number,
+        paused: msg.paused as boolean,
+        speed: msg.speed as number,
+        nowMs,
+      };
+      break;
+    case "heartbeat":
+      action = {
+        kind: "remote-heartbeat" as const,
+        positionMs: msg.positionMs as number,
+        paused: msg.paused as boolean,
+        speed: msg.speed as number,
+        buffering: msg.buffering as boolean | undefined,
+        seeking: msg.seeking as boolean | undefined,
+        nowMs,
+      };
+      break;
+    default:
+      return;
+  }
+
+  const effects = syncEngine.apply(action);
+  executeEffects(effects);
+}
+
+// ── IINA player event listeners ─────────────────────────────────────
+
+iina.event.on("iina.pause", () => {
+  if (!syncEngine || connState !== "connected") return;
+  const positionMs = getPositionMs();
+  const nowMs = Date.now();
+  const effects = core.status.paused
+    ? syncEngine.apply({ kind: "local-pause", positionMs, nowMs })
+    : syncEngine.apply({ kind: "local-play", positionMs, nowMs });
+  executeEffects(effects);
+});
+
+iina.event.on("iina.seek", () => {
+  if (!syncEngine || connState !== "connected") return;
+  const positionMs = getPositionMs();
+  const nowMs = Date.now();
+  const effects = syncEngine.apply({ kind: "local-seek", positionMs, nowMs });
+  executeEffects(effects);
+});
+
+iina.event.on("iina.speed", () => {
+  if (!syncEngine || connState !== "connected") return;
+  const speed = core.status.speed ?? 1;
+  const nowMs = Date.now();
+  const effects = syncEngine.apply({ kind: "local-speed", speed, nowMs });
+  executeEffects(effects);
+});
