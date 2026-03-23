@@ -149,7 +149,7 @@ describe("packages/plugin", () => {
     expect(existsSync(join(dir, "prefs/index.html"))).toBe(true);
   });
 
-  test("prepare-build script exists", () => {
-    expect(existsSync(join(dir, "scripts/prepare-build.ts"))).toBe(true);
+  test("build script exists", () => {
+    expect(existsSync(join(dir, "scripts/build.ts"))).toBe(true);
   });
 });
