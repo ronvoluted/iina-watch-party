@@ -23,7 +23,7 @@ import { describe, test, expect } from "bun:test";
  * These use the `iina.` prefix and are the only IINA-specific events with
  * typed overloads in the plugin API.
  */
-const IINA_TYPED_EVENTS = [
+const IINA_TYPED_EVENTS: string[] = [
   "iina.window-loaded",
   "iina.window-size-adjusted",
   "iina.window-screen.changed",
@@ -44,7 +44,7 @@ const IINA_TYPED_EVENTS = [
  * mpv events from mpv manual "List of events" section. These are fired via
  * the mpv event system and listened to with `event.on("mpv.EVENT_NAME", cb)`.
  */
-const MPV_EVENTS = [
+const MPV_EVENTS: string[] = [
   "start-file",
   "end-file",
   "file-loaded",

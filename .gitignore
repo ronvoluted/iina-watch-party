@@ -2,6 +2,7 @@ node_modules/
 .scaffold-verify/
 bun.lock
 *.tsbuildinfo
+packages/worker/src/*.d.ts
 .DS_Store
 dist/
 build/

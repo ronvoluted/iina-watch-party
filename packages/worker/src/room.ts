@@ -6,6 +6,7 @@
  */
 
 import { DurableObject } from "cloudflare:workers";
+import type { Env } from "./index.js";
 
 // ── Constants ───────────────────────────────────────────────────
 
@@ -56,7 +57,7 @@ function isValidRoomCode(code: string): boolean {
 // ── Durable Object ──────────────────────────────────────────────
 
 export class Room extends DurableObject {
-  constructor(ctx: DurableObjectState, env: unknown) {
+  constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.ctx.storage.sql.exec(
       `CREATE TABLE IF NOT EXISTS room_meta (
