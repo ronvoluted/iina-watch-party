@@ -52,3 +52,9 @@ export {
   type SyncAction,
   type SyncEffect,
 } from "./sync.js";
+
+export {
+  checkFileMismatch,
+  DEFAULT_DURATION_TOLERANCE_MS,
+  type FileMismatchResult,
+} from "./file-mismatch.js";

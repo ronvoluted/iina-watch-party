@@ -24,6 +24,9 @@ const MAX_MESSAGE_SIZE_BYTES = 8192;
 const PROTOCOL_VERSION = 1;
 const MAX_PARTICIPANTS = 2;
 
+/** Duration tolerance for file mismatch detection (5 seconds). */
+const FILE_DURATION_TOLERANCE_MS = 5000;
+
 /** Message types that get relayed to the peer as-is. */
 const RELAY_TYPES: ReadonlySet<string> = new Set([
   "play",
@@ -38,12 +41,20 @@ const RELAY_TYPES: ReadonlySet<string> = new Set([
 
 // ── Types ───────────────────────────────────────────────────────
 
+/** File metadata sent during auth. */
+interface FileMetadata {
+  name?: string;
+  durationMs?: number;
+  sizeBytes?: number;
+}
+
 /** Metadata attached to each WebSocket via serializeAttachment. */
 interface WsAttachment {
   authenticated: boolean;
   sessionId: string;
   role: string;
   connectedAtMs: number;
+  file?: FileMetadata;
 }
 
 function isValidRoomCode(code: string): boolean {
@@ -356,6 +367,17 @@ export class Room extends DurableObject {
 
     const sessionId = parsed.sessionId as string;
 
+    // Extract file metadata from auth message
+    const rawFile =
+      typeof parsed.file === "object" && parsed.file !== null && !Array.isArray(parsed.file)
+        ? (parsed.file as Record<string, unknown>)
+        : {};
+    const file: FileMetadata = {
+      name: typeof rawFile.name === "string" ? rawFile.name : undefined,
+      durationMs: typeof rawFile.durationMs === "number" ? rawFile.durationMs : undefined,
+      sizeBytes: typeof rawFile.sizeBytes === "number" ? rawFile.sizeBytes : undefined,
+    };
+
     // Check if this sessionId is a known participant (reconnection)
     const existingRows = this.ctx.storage.sql
       .exec("SELECT role FROM participants WHERE session_id = ?", sessionId)
@@ -379,7 +401,7 @@ export class Room extends DurableObject {
         wasReplaced = true;
       }
 
-      this.setAuthenticated(ws, att, sessionId, role);
+      this.setAuthenticated(ws, att, sessionId, role, file);
       const peerPresent = connectedPeers.length > 0;
 
       this.sendServerMessage(ws, "auth-ok", {
@@ -394,6 +416,7 @@ export class Room extends DurableObject {
           event: wasReplaced ? "peer-replaced" : "peer-joined",
           role,
         });
+        this.checkAndWarnFileMismatch(ws, connectedPeers[0].ws);
       }
       return;
     }
@@ -422,7 +445,7 @@ export class Room extends DurableObject {
       role,
     );
 
-    this.setAuthenticated(ws, att, sessionId, role);
+    this.setAuthenticated(ws, att, sessionId, role, file);
     const peerPresent = connectedPeers.length > 0;
 
     this.sendServerMessage(ws, "auth-ok", {
@@ -437,6 +460,7 @@ export class Room extends DurableObject {
         event: "peer-joined",
         role,
       });
+      this.checkAndWarnFileMismatch(ws, connectedPeers[0].ws);
     }
   }
 
@@ -547,12 +571,14 @@ export class Room extends DurableObject {
     att: WsAttachment,
     sessionId: string,
     role: string,
+    file?: FileMetadata,
   ): void {
     ws.serializeAttachment({
       ...att,
       authenticated: true,
       sessionId,
       role,
+      file,
     } satisfies WsAttachment);
   }
 
@@ -568,6 +594,41 @@ export class Room extends DurableObject {
       }
     }
     return peers;
+  }
+
+  /**
+   * Compare file metadata between two peers and send a file-mismatch warning
+   * to both if they appear to be watching different files.
+   */
+  private checkAndWarnFileMismatch(wsA: WebSocket, wsB: WebSocket): void {
+    const fileA = this.getAttachment(wsA).file;
+    const fileB = this.getAttachment(wsB).file;
+    if (!fileA || !fileB) return;
+
+    const reasons: string[] = [];
+
+    // Duration comparison — primary signal
+    if (fileA.durationMs != null && fileB.durationMs != null) {
+      const diff = Math.abs(fileA.durationMs - fileB.durationMs);
+      if (diff > FILE_DURATION_TOLERANCE_MS) {
+        reasons.push(`duration differs by ${Math.round(diff / 1000)}s`);
+      }
+    }
+
+    // Filename comparison — secondary signal
+    if (
+      fileA.name != null && fileB.name != null &&
+      fileA.name !== "" && fileB.name !== "" &&
+      fileA.name !== fileB.name
+    ) {
+      reasons.push("filenames differ");
+    }
+
+    if (reasons.length === 0) return;
+
+    const message = `File mismatch: ${reasons.join(", ")}`;
+    this.sendServerMessage(wsA, "warning", { code: "file-mismatch", message });
+    this.sendServerMessage(wsB, "warning", { code: "file-mismatch", message });
   }
 
   private relayToPeer(fromWs: WebSocket, message: string): void {

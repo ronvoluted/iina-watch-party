@@ -29,8 +29,8 @@ interface RoomContext {
 }
 
 interface FileMetadata {
+  name: string;
   durationMs: number;
-  title: string;
 }
 
 // ── State ──────────────────────────────────────────────────────────
@@ -61,8 +61,8 @@ function getDisplayName(): string {
 
 function getFileMetadata(): FileMetadata {
   return {
+    name: core.status.title ?? "",
     durationMs: Math.round((core.status.duration ?? 0) * 1000),
-    title: core.status.title ?? "",
   };
 }
 
@@ -539,8 +539,14 @@ function onPresence(msg: Record<string, unknown>) {
 }
 
 function onWarning(msg: Record<string, unknown>) {
-  log.log(`Warning: ${String(msg.code)} — ${String(msg.message)}`);
-  sidebar.postMessage("sb-warning", { text: msg.message as string });
+  const code = msg.code as string;
+  const text = msg.message as string;
+  log.log(`Warning: ${code} — ${text}`);
+  sidebar.postMessage("sb-warning", { text });
+
+  if (code === "file-mismatch") {
+    osd.show(`Watch Party: ${text}`);
+  }
 }
 
 function onServerError(msg: Record<string, unknown>) {

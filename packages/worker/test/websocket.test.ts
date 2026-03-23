@@ -649,6 +649,191 @@ describe("Room WebSocket lifecycle", () => {
     });
   });
 
+  // ── File mismatch warning ──────────────────────────────────
+
+  describe("file mismatch warning", () => {
+    it("sends file-mismatch warning when durations differ significantly", async () => {
+      const { roomCode, secret } = await createRoom();
+
+      const ws1 = await connectWs(roomCode);
+      const msgs1 = collectMessages(ws1);
+      ws1.send(
+        authPayload(secret, "session-fm-host", {
+          file: { name: "movie.mkv", durationMs: 7200000 },
+        }),
+      );
+      await tick();
+
+      const ws2 = await connectWs(roomCode);
+      const msgs2 = collectMessages(ws2);
+      ws2.send(
+        authPayload(secret, "session-fm-guest", {
+          file: { name: "movie.mkv", durationMs: 3600000 },
+        }),
+      );
+      await tick();
+
+      const warning1 = msgs1.get().find((m) => m.type === "warning");
+      expect(warning1).toBeDefined();
+      expect(warning1!.code).toBe("file-mismatch");
+      expect(warning1!.message).toContain("duration differs by");
+
+      const warning2 = msgs2.get().find((m) => m.type === "warning");
+      expect(warning2).toBeDefined();
+      expect(warning2!.code).toBe("file-mismatch");
+
+      ws1.close();
+      ws2.close();
+    });
+
+    it("sends file-mismatch warning when filenames differ", async () => {
+      const { roomCode, secret } = await createRoom();
+
+      const ws1 = await connectWs(roomCode);
+      const msgs1 = collectMessages(ws1);
+      ws1.send(
+        authPayload(secret, "session-fn-host", {
+          file: { name: "movie-v1.mkv", durationMs: 7200000 },
+        }),
+      );
+      await tick();
+
+      const ws2 = await connectWs(roomCode);
+      const msgs2 = collectMessages(ws2);
+      ws2.send(
+        authPayload(secret, "session-fn-guest", {
+          file: { name: "movie-v2.mkv", durationMs: 7200000 },
+        }),
+      );
+      await tick();
+
+      const warning1 = msgs1.get().find((m) => m.type === "warning");
+      expect(warning1).toBeDefined();
+      expect(warning1!.code).toBe("file-mismatch");
+      expect(warning1!.message).toContain("filenames differ");
+
+      const warning2 = msgs2.get().find((m) => m.type === "warning");
+      expect(warning2).toBeDefined();
+
+      ws1.close();
+      ws2.close();
+    });
+
+    it("does not send warning when files match", async () => {
+      const { roomCode, secret } = await createRoom();
+
+      const ws1 = await connectWs(roomCode);
+      const msgs1 = collectMessages(ws1);
+      ws1.send(
+        authPayload(secret, "session-match-host", {
+          file: { name: "movie.mkv", durationMs: 7200000 },
+        }),
+      );
+      await tick();
+
+      const ws2 = await connectWs(roomCode);
+      const msgs2 = collectMessages(ws2);
+      ws2.send(
+        authPayload(secret, "session-match-guest", {
+          file: { name: "movie.mkv", durationMs: 7200000 },
+        }),
+      );
+      await tick();
+
+      const warning1 = msgs1.get().find((m) => m.type === "warning");
+      expect(warning1).toBeUndefined();
+
+      const warning2 = msgs2.get().find((m) => m.type === "warning");
+      expect(warning2).toBeUndefined();
+
+      ws1.close();
+      ws2.close();
+    });
+
+    it("does not send warning when durations are within tolerance", async () => {
+      const { roomCode, secret } = await createRoom();
+
+      const ws1 = await connectWs(roomCode);
+      const msgs1 = collectMessages(ws1);
+      ws1.send(
+        authPayload(secret, "session-tol-host", {
+          file: { name: "movie.mkv", durationMs: 7200000 },
+        }),
+      );
+      await tick();
+
+      const ws2 = await connectWs(roomCode);
+      const msgs2 = collectMessages(ws2);
+      ws2.send(
+        authPayload(secret, "session-tol-guest", {
+          file: { name: "movie.mkv", durationMs: 7204000 },
+        }),
+      );
+      await tick();
+
+      const warning1 = msgs1.get().find((m) => m.type === "warning");
+      expect(warning1).toBeUndefined();
+
+      const warning2 = msgs2.get().find((m) => m.type === "warning");
+      expect(warning2).toBeUndefined();
+
+      ws1.close();
+      ws2.close();
+    });
+
+    it("does not send warning when file metadata is empty", async () => {
+      const { roomCode, secret } = await createRoom();
+
+      const ws1 = await connectWs(roomCode);
+      const msgs1 = collectMessages(ws1);
+      ws1.send(authPayload(secret, "session-empty-host"));
+      await tick();
+
+      const ws2 = await connectWs(roomCode);
+      const msgs2 = collectMessages(ws2);
+      ws2.send(authPayload(secret, "session-empty-guest"));
+      await tick();
+
+      const warning1 = msgs1.get().find((m) => m.type === "warning");
+      expect(warning1).toBeUndefined();
+
+      const warning2 = msgs2.get().find((m) => m.type === "warning");
+      expect(warning2).toBeUndefined();
+
+      ws1.close();
+      ws2.close();
+    });
+
+    it("includes both reasons when duration and filename differ", async () => {
+      const { roomCode, secret } = await createRoom();
+
+      const ws1 = await connectWs(roomCode);
+      const msgs1 = collectMessages(ws1);
+      ws1.send(
+        authPayload(secret, "session-both-host", {
+          file: { name: "a.mkv", durationMs: 7200000 },
+        }),
+      );
+      await tick();
+
+      const ws2 = await connectWs(roomCode);
+      ws2.send(
+        authPayload(secret, "session-both-guest", {
+          file: { name: "b.mkv", durationMs: 3600000 },
+        }),
+      );
+      await tick();
+
+      const warning = msgs1.get().find((m) => m.type === "warning");
+      expect(warning).toBeDefined();
+      expect(warning!.message).toContain("duration differs by");
+      expect(warning!.message).toContain("filenames differ");
+
+      ws1.close();
+      ws2.close();
+    });
+  });
+
   // ── WebSocket upgrade validation ───────────────────────────
 
   describe("upgrade validation", () => {
