@@ -4,29 +4,95 @@
 <meta charset="utf-8">
 <title>Watch Party Preferences</title>
 <style>
-  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 16px; }
-  label { display: block; margin-bottom: 4px; font-size: 13px; }
-  input { width: 100%; padding: 6px; margin-bottom: 12px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 16px; font-size: 13px; }
+  label { display: block; margin-bottom: 4px; font-weight: 500; }
+  .field { margin-bottom: 16px; }
+  .hint { font-size: 11px; color: #888; margin-top: 2px; }
+  .hint.error { color: #ff3b30; }
+  input {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-sizing: border-box;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  input.invalid { border-color: #ff3b30; }
 </style>
 </head>
 <body>
-<label for="backendUrl">Backend URL</label>
-<input id="backendUrl" type="url" placeholder="https://your-worker.workers.dev" />
 
-<label for="displayName">Display Name</label>
-<input id="displayName" type="text" placeholder="Your name" />
+<div class="field">
+  <label for="backendUrl">Backend URL</label>
+  <input id="backendUrl" type="url" placeholder="https://your-worker.workers.dev" />
+  <p class="hint" id="backendUrl-hint">The Cloudflare Worker URL for your watch party backend.</p>
+</div>
 
-<label for="driftThresholdMs">Drift Threshold (ms)</label>
-<input id="driftThresholdMs" type="number" value="2000" min="500" max="10000" step="100" />
+<div class="field">
+  <label for="displayName">Display Name</label>
+  <input id="displayName" type="text" placeholder="Your name" maxlength="32" />
+  <p class="hint" id="displayName-hint">Shown to your watch party peer.</p>
+</div>
+
+<div class="field">
+  <label for="driftThresholdMs">Drift Threshold (ms)</label>
+  <input id="driftThresholdMs" type="number" value="2000" min="500" max="10000" step="100" />
+  <p class="hint" id="driftThresholdMs-hint">How far apart playback can drift before correction. 500–10000 ms.</p>
+</div>
 
 <script>
-  const fields = ["backendUrl", "displayName", "driftThresholdMs"];
-  fields.forEach((key) => {
-    const el = document.getElementById(key);
-    const stored = iina.preference.get(key);
+  var fields = ["backendUrl", "displayName", "driftThresholdMs"];
+
+  function validate(key, value) {
+    var hint = document.getElementById(key + "-hint");
+    var input = document.getElementById(key);
+    if (key === "backendUrl" && value) {
+      try {
+        var url = new URL(value);
+        if (url.protocol !== "https:" && url.protocol !== "http:") {
+          hint.textContent = "URL must use https:// or http://";
+          hint.classList.add("error");
+          input.classList.add("invalid");
+          return false;
+        }
+      } catch (e) {
+        hint.textContent = "Enter a valid URL.";
+        hint.classList.add("error");
+        input.classList.add("invalid");
+        return false;
+      }
+    }
+    if (key === "driftThresholdMs") {
+      var n = Number(value);
+      if (isNaN(n) || n < 500 || n > 10000) {
+        hint.textContent = "Must be between 500 and 10000 ms.";
+        hint.classList.add("error");
+        input.classList.add("invalid");
+        return false;
+      }
+    }
+    // Reset hint
+    hint.classList.remove("error");
+    input.classList.remove("invalid");
+    if (key === "backendUrl") hint.textContent = "The Cloudflare Worker URL for your watch party backend.";
+    if (key === "displayName") hint.textContent = "Shown to your watch party peer.";
+    if (key === "driftThresholdMs") hint.textContent = "How far apart playback can drift before correction. 500\u201310000 ms.";
+    return true;
+  }
+
+  fields.forEach(function (key) {
+    var el = document.getElementById(key);
+    var stored = iina.preference.get(key);
     if (stored != null) el.value = stored;
-    el.addEventListener("change", () => {
-      iina.preference.set(key, key === "driftThresholdMs" ? Number(el.value) : el.value);
+    el.addEventListener("change", function () {
+      var value = key === "driftThresholdMs" ? Number(el.value) : el.value;
+      if (validate(key, el.value)) {
+        iina.preference.set(key, value);
+      }
+    });
+    el.addEventListener("input", function () {
+      validate(key, el.value);
     });
   });
 </script>
