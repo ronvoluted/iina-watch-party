@@ -248,6 +248,69 @@ describe("overlay bridge", () => {
     });
   });
 
+  describe("http-fetch", () => {
+    test("registers http-fetch handler", () => {
+      expect(handlers["http-fetch"]).toBeDefined();
+    });
+
+    test("posts http-response error when url is missing", () => {
+      send("http-fetch", {});
+
+      const resp = lastPosted("http-response");
+      expect(resp).toBeDefined();
+      expect((resp!.data as any).ok).toBe(false);
+      expect((resp!.data as any).error).toContain("url");
+    });
+
+    test("posts http-response error when data is null", () => {
+      send("http-fetch", null);
+
+      const resp = lastPosted("http-response");
+      expect(resp).toBeDefined();
+      expect((resp!.data as any).ok).toBe(false);
+    });
+
+    test("makes fetch call with correct url and method", async () => {
+      const fetchCalls: Array<{ url: string; opts: any }> = [];
+      (globalThis as any).fetch = (url: string, opts: any) => {
+        fetchCalls.push({ url, opts });
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ roomCode: "ABC123" }),
+        });
+      };
+
+      send("http-fetch", { url: "https://example.com/api/rooms", method: "POST" });
+
+      // Wait for async fetch to complete
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(fetchCalls.length).toBe(1);
+      expect(fetchCalls[0].url).toBe("https://example.com/api/rooms");
+      expect(fetchCalls[0].opts.method).toBe("POST");
+
+      const resp = lastPosted("http-response");
+      expect(resp).toBeDefined();
+      expect((resp!.data as any).ok).toBe(true);
+      expect((resp!.data as any).status).toBe(200);
+      expect((resp!.data as any).body).toEqual({ roomCode: "ABC123" });
+    });
+
+    test("posts error on fetch failure", async () => {
+      (globalThis as any).fetch = () => Promise.reject(new Error("Network unreachable"));
+
+      send("http-fetch", { url: "https://example.com/api/rooms" });
+
+      await new Promise((r) => setTimeout(r, 10));
+
+      const resp = lastPosted("http-response");
+      expect(resp).toBeDefined();
+      expect((resp!.data as any).ok).toBe(false);
+      expect((resp!.data as any).error).toBe("Network unreachable");
+    });
+  });
+
   describe("reconnection", () => {
     test("schedules reconnect on unexpected close", () => {
       send("ws-connect", { url: "wss://example.com/ws/ABC123" });

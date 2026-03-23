@@ -157,3 +157,31 @@ iina.onMessage("ws-send", function (data) {
     socket.send(data.data);
   }
 });
+
+// --- HTTP fetch bridge ---
+
+/**
+ * http-fetch: Make an HTTP request and return the result.
+ * Payload: { url: string, method?: string, headers?: object, body?: string }
+ * Response posted as http-response: { ok: boolean, status: number, body: unknown, error?: string }
+ */
+iina.onMessage("http-fetch", function (data) {
+  if (!data || !data.url) {
+    iina.postMessage("http-response", { ok: false, error: "http-fetch requires a url" });
+    return;
+  }
+
+  var opts = { method: data.method || "GET" };
+  if (data.headers) opts.headers = data.headers;
+  if (data.body) opts.body = typeof data.body === "string" ? data.body : JSON.stringify(data.body);
+
+  fetch(data.url, opts)
+    .then(function (res) {
+      return res.json().then(function (body) {
+        iina.postMessage("http-response", { ok: res.ok, status: res.status, body: body });
+      });
+    })
+    .catch(function (err) {
+      iina.postMessage("http-response", { ok: false, error: err.message || "Network error" });
+    });
+});
