@@ -7,7 +7,7 @@
 
 import { parseInvite, PROTOCOL_VERSION } from "@iina-watch-party/shared";
 
-const { overlay, sidebar, console: log } = iina;
+const { overlay, sidebar, console: log, core, preferences, osd } = iina;
 
 log.log("Watch Party plugin loaded");
 
@@ -28,6 +28,11 @@ interface RoomContext {
   invite: string;
 }
 
+interface FileMetadata {
+  durationMs: number;
+  title: string;
+}
+
 // ── State ──────────────────────────────────────────────────────────
 
 let connState: ConnectionState = "idle";
@@ -35,8 +40,30 @@ let room: RoomContext | null = null;
 const sessionId = `s-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 let msgSeq = 0;
 
-// TODO: read from preferences
-const BACKEND_URL = "https://watchparty.example.com";
+// ── Preferences ────────────────────────────────────────────────────
+
+function getBackendUrl(): string {
+  const url = preferences.get("backendUrl") as string | undefined;
+  return url && url.trim() !== "" ? url.trim() : "";
+}
+
+function getDisplayName(): string {
+  const name = preferences.get("displayName") as string | undefined;
+  return name && name.trim() !== "" ? name.trim() : "Anonymous";
+}
+
+// ── File metadata ──────────────────────────────────────────────────
+
+function getFileMetadata(): FileMetadata {
+  return {
+    durationMs: Math.round((core.status.duration ?? 0) * 1000),
+    title: core.status.title ?? "",
+  };
+}
+
+function isFileLoaded(): boolean {
+  return !core.status.idle;
+}
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -91,13 +118,27 @@ function disconnect() {
 sidebar.onMessage("create-room", (_data: unknown) => {
   if (connState !== "idle") return;
 
+  if (!isFileLoaded()) {
+    sidebar.postMessage("sb-error", { text: "Please open a video file first." });
+    osd.show("Watch Party: Open a file before creating a room");
+    return;
+  }
+
+  const backendUrl = getBackendUrl();
+  if (!backendUrl) {
+    sidebar.postMessage("sb-error", {
+      text: "Backend URL not configured. Set it in plugin preferences.",
+    });
+    return;
+  }
+
   log.log("Creating room…");
   transition("connecting");
   setSidebarView("connecting");
   sidebar.postMessage("sb-connecting-text", { text: "Creating room…" });
 
   overlay.postMessage("http-fetch", {
-    url: `${BACKEND_URL}/api/rooms`,
+    url: `${backendUrl}/api/rooms`,
     method: "POST",
   });
 });
@@ -116,6 +157,7 @@ overlay.onMessage("http-response", (data: unknown) => {
     log.log(`Create room failed: ${d?.error ?? `HTTP ${d?.status}`}`);
     resetState();
     sidebar.postMessage("sb-error", { text: d?.error ?? "Failed to create room" });
+    osd.show("Watch Party: Failed to create room");
     return;
   }
 
@@ -133,7 +175,7 @@ overlay.onMessage("http-response", (data: unknown) => {
   }
 
   room = {
-    backendUrl: BACKEND_URL,
+    backendUrl: getBackendUrl(),
     wsUrl,
     roomCode,
     secret,
@@ -164,8 +206,16 @@ sidebar.onMessage("join-room", (data: unknown) => {
     return;
   }
 
+  const backendUrl = getBackendUrl();
+  if (!backendUrl) {
+    sidebar.postMessage("sb-error", {
+      text: "Backend URL not configured. Set it in plugin preferences.",
+    });
+    return;
+  }
+
   const { roomCode, secret } = result.invite;
-  const wsUrl = toWsUrl(BACKEND_URL, roomCode);
+  const wsUrl = toWsUrl(backendUrl, roomCode);
 
   log.log(`Joining room ${roomCode}…`);
   transition("connecting");
@@ -173,7 +223,7 @@ sidebar.onMessage("join-room", (data: unknown) => {
   sidebar.postMessage("sb-connecting-text", { text: "Joining room…" });
 
   room = {
-    backendUrl: BACKEND_URL,
+    backendUrl,
     wsUrl,
     roomCode,
     secret,
@@ -193,7 +243,8 @@ sidebar.onMessage("leave-room", (_data: unknown) => {
 
 sidebar.onMessage("copy-invite", (_data: unknown) => {
   if (room) {
-    log.log(`Copy invite: ${room.invite}`);
+    sidebar.postMessage("sb-copy-text", { text: room.invite });
+    osd.show("Invite copied to clipboard");
   }
 });
 
@@ -206,11 +257,13 @@ overlay.onMessage("ws-open", (_data: unknown) => {
   transition("authenticating");
   sidebar.postMessage("sb-connecting-text", { text: "Authenticating…" });
 
+  const file = getFileMetadata();
   sendProtocol({
     ...makeEnvelope("auth"),
     secret: room.secret,
+    displayName: getDisplayName(),
     desiredRole: room.role,
-    file: {},
+    file,
   });
 });
 
@@ -233,7 +286,10 @@ overlay.onMessage("ws-closed", (data: unknown) => {
   const d = data as { code?: number; reason?: string } | null;
   log.log(`WebSocket closed: code=${d?.code} reason=${d?.reason}`);
 
-  if (connState === "connected" || connState === "authenticating") {
+  if (connState === "connecting" || connState === "authenticating") {
+    resetState();
+    sidebar.postMessage("sb-error", { text: "Connection failed" });
+  } else if (connState === "connected") {
     sidebar.postMessage("sb-status", { text: "Connection lost" });
   }
 });
@@ -305,6 +361,7 @@ function onAuthOk(msg: Record<string, unknown>) {
   });
 
   sidebar.postMessage("sb-status", { text: "Connected" });
+  osd.show(`Watch Party: Connected to room ${room.roomCode}`);
 }
 
 function onAuthError(msg: Record<string, unknown>) {

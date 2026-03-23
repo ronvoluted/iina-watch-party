@@ -351,4 +351,55 @@ describe("sidebar shell", () => {
       expect(elements["connecting-text"].textContent).toBe("Joining room…");
     });
   });
+
+  describe("sb-copy-text", () => {
+    test("registers sb-copy-text handler", () => {
+      expect(handlers["sb-copy-text"]).toBeDefined();
+    });
+
+    test("calls navigator.clipboard.writeText with text", () => {
+      let copiedText = "";
+      (globalThis as any).navigator = {
+        clipboard: {
+          writeText(text: string) {
+            copiedText = text;
+            return Promise.resolve();
+          },
+        },
+      };
+
+      send("sb-copy-text", { text: "ABC123:secret" });
+      expect(copiedText).toBe("ABC123:secret");
+    });
+
+    test("does nothing when data is null", () => {
+      let called = false;
+      (globalThis as any).navigator = {
+        clipboard: {
+          writeText() {
+            called = true;
+            return Promise.resolve();
+          },
+        },
+      };
+
+      send("sb-copy-text", null);
+      expect(called).toBe(false);
+    });
+
+    test("does nothing when text is missing", () => {
+      let called = false;
+      (globalThis as any).navigator = {
+        clipboard: {
+          writeText() {
+            called = true;
+            return Promise.resolve();
+          },
+        },
+      };
+
+      send("sb-copy-text", {});
+      expect(called).toBe(false);
+    });
+  });
 });

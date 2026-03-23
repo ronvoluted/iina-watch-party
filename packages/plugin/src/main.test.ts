@@ -15,6 +15,13 @@ let overlayPosted: Posted[];
 let sidebarPosted: Posted[];
 
 let logMessages: string[];
+let osdMessages: string[];
+
+/** Mock preferences store. */
+let prefsStore: Record<string, unknown>;
+
+/** Mock core status. */
+let coreStatus: Record<string, unknown>;
 
 /** Type-safe accessor for posted message data fields. */
 function d(msg: Posted | undefined): Record<string, unknown> {
@@ -27,6 +34,22 @@ function setupGlobals() {
   overlayPosted = [];
   sidebarPosted = [];
   logMessages = [];
+  osdMessages = [];
+  prefsStore = {
+    backendUrl: "https://watchparty.example.com",
+    displayName: "TestUser",
+    driftThresholdMs: 2000,
+  };
+  coreStatus = {
+    paused: false,
+    idle: false,
+    position: 42.5,
+    duration: 7200,
+    speed: 1.0,
+    url: "/path/to/movie.mp4",
+    title: "movie.mp4",
+    isNetworkResource: false,
+  };
 
   (globalThis as Record<string, unknown>).iina = {
     overlay: {
@@ -52,6 +75,36 @@ function setupGlobals() {
         logMessages.push(args.map(String).join(" "));
       },
     },
+    core: {
+      status: coreStatus,
+      pause() {},
+      resume() {},
+      seek() {},
+      seekTo() {},
+      setSpeed() {},
+      stop() {},
+    },
+    preferences: {
+      get(key: string) {
+        return prefsStore[key];
+      },
+      set(key: string, value: unknown) {
+        prefsStore[key] = value;
+      },
+    },
+    osd: {
+      show(message: string) {
+        osdMessages.push(message);
+      },
+    },
+    event: {
+      on() {},
+    },
+    mpv: {
+      getFlag() { return false; },
+      getNumber() { return 0; },
+      getString() { return ""; },
+    },
   };
 }
 
@@ -62,6 +115,7 @@ function loadMain() {
   overlayPosted = [];
   sidebarPosted = [];
   logMessages = [];
+  osdMessages = [];
 }
 
 function sidebarSend(name: string, data?: unknown) {
@@ -171,6 +225,41 @@ describe("main connection state", () => {
       expect(d(fetch).method).toBe("POST");
     });
 
+    test("uses backend URL from preferences", () => {
+      prefsStore.backendUrl = "https://custom-backend.example.com";
+      sidebarSend("create-room");
+
+      const fetch = lastOverlayPosted("http-fetch");
+      expect(d(fetch).url).toBe("https://custom-backend.example.com/api/rooms");
+    });
+
+    test("shows error when backend URL is not configured", () => {
+      prefsStore.backendUrl = "";
+      sidebarSend("create-room");
+
+      const err = lastSidebarPosted("sb-error");
+      expect(err).toBeDefined();
+      expect(d(err).text).toContain("Backend URL");
+      expect(findOverlayPosted("http-fetch")).toEqual([]);
+    });
+
+    test("shows error when no file is loaded", () => {
+      coreStatus.idle = true;
+      sidebarSend("create-room");
+
+      const err = lastSidebarPosted("sb-error");
+      expect(err).toBeDefined();
+      expect(d(err).text).toContain("video file");
+      expect(findOverlayPosted("http-fetch")).toEqual([]);
+    });
+
+    test("shows OSD when no file is loaded", () => {
+      coreStatus.idle = true;
+      sidebarSend("create-room");
+
+      expect(osdMessages.some((m) => m.includes("file"))).toBe(true);
+    });
+
     test("shows connecting view on create-room", () => {
       sidebarSend("create-room");
 
@@ -207,6 +296,14 @@ describe("main connection state", () => {
       expect(d(err).text).toContain("Network error");
     });
 
+    test("shows OSD on http-response failure", () => {
+      sidebarSend("create-room");
+
+      overlaySend("http-response", { ok: false, error: "Network error" });
+
+      expect(osdMessages.some((m) => m.includes("Failed"))).toBe(true);
+    });
+
     test("shows error on invalid server response", () => {
       sidebarSend("create-room");
 
@@ -221,7 +318,7 @@ describe("main connection state", () => {
       expect(d(err).text).toContain("Invalid server response");
     });
 
-    test("sends auth message on ws-open", () => {
+    test("sends auth message with file metadata and display name on ws-open", () => {
       sidebarSend("create-room");
 
       overlaySend("http-response", {
@@ -243,9 +340,37 @@ describe("main connection state", () => {
       expect(msg.type).toBe("auth");
       expect(msg.secret).toBe("testsecret");
       expect(msg.desiredRole).toBe("host");
+      expect(msg.displayName).toBe("TestUser");
       expect(msg.protocolVersion).toBe(1);
       expect(msg.sessionId).toBeDefined();
       expect(msg.messageId).toBeDefined();
+
+      const file = msg.file as Record<string, unknown>;
+      expect(file).toBeDefined();
+      expect(file.durationMs).toBe(7200000);
+      expect(file.title).toBe("movie.mp4");
+    });
+
+    test("uses default display name when preference is empty", () => {
+      prefsStore.displayName = "";
+      sidebarSend("create-room");
+
+      overlaySend("http-response", {
+        ok: true,
+        status: 200,
+        body: {
+          roomCode: "ABC123",
+          secret: "testsecret",
+          wsUrl: "wss://watchparty.example.com/ws/ABC123",
+          invite: "ABC123:testsecret",
+        },
+      });
+
+      overlaySend("ws-open");
+
+      const send = lastOverlayPosted("ws-send");
+      const msg = JSON.parse(d(send).data as string) as Record<string, unknown>;
+      expect(msg.displayName).toBe("Anonymous");
     });
 
     test("transitions to connected on auth-ok", () => {
@@ -258,6 +383,12 @@ describe("main connection state", () => {
       expect(room).toBeDefined();
       expect(d(room).code).toBe("ABC123");
       expect(d(room).invite).toBe("ABC123:testsecret");
+    });
+
+    test("shows OSD on successful connection", () => {
+      doCreateRoom();
+
+      expect(osdMessages.some((m) => m.includes("Connected"))).toBe(true);
     });
 
     test("ignores create-room when not idle", () => {
@@ -279,6 +410,24 @@ describe("main connection state", () => {
       expect(d(connect).url).toContain("/ws/ABCDEF");
     });
 
+    test("uses backend URL from preferences for WebSocket URL", () => {
+      prefsStore.backendUrl = "https://custom.example.com";
+      sidebarSend("join-room", { invite: "ABCDEF:dGVzdHNlY3JldA" });
+
+      const connect = lastOverlayPosted("ws-connect");
+      expect(d(connect).url).toBe("wss://custom.example.com/ws/ABCDEF");
+    });
+
+    test("shows error when backend URL is not configured", () => {
+      prefsStore.backendUrl = "";
+      sidebarSend("join-room", { invite: "ABCDEF:dGVzdHNlY3JldA" });
+
+      const err = lastSidebarPosted("sb-error");
+      expect(err).toBeDefined();
+      expect(d(err).text).toContain("Backend URL");
+      expect(findOverlayPosted("ws-connect")).toEqual([]);
+    });
+
     test("shows connecting view on join-room", () => {
       sidebarSend("join-room", { invite: "ABCDEF:dGVzdHNlY3JldA" });
 
@@ -286,7 +435,7 @@ describe("main connection state", () => {
       expect(state.some((m) => d(m).view === "connecting")).toBe(true);
     });
 
-    test("sends auth with guest role on ws-open", () => {
+    test("sends auth with guest role and file metadata on ws-open", () => {
       sidebarSend("join-room", { invite: "ABCDEF:dGVzdHNlY3JldA" });
       overlaySend("ws-open");
 
@@ -296,6 +445,10 @@ describe("main connection state", () => {
       expect(msg.type).toBe("auth");
       expect(msg.secret).toBe("dGVzdHNlY3JldA");
       expect(msg.desiredRole).toBe("guest");
+      expect(msg.displayName).toBe("TestUser");
+
+      const file = msg.file as Record<string, unknown>;
+      expect(file.durationMs).toBe(7200000);
     });
 
     test("transitions to connected on auth-ok", () => {
@@ -494,6 +647,56 @@ describe("main connection state", () => {
       expect(d(status).text).toBe("Connection lost");
     });
 
+    test("resets to idle on ws-closed while connecting", () => {
+      sidebarSend("create-room");
+      sidebarPosted = [];
+
+      overlaySend("http-response", {
+        ok: true,
+        status: 200,
+        body: {
+          roomCode: "ABC123",
+          secret: "testsecret",
+          wsUrl: "wss://watchparty.example.com/ws/ABC123",
+          invite: "ABC123:testsecret",
+        },
+      });
+
+      sidebarPosted = [];
+      overlaySend("ws-closed", { code: 1006, reason: "" });
+
+      const err = lastSidebarPosted("sb-error");
+      expect(err).toBeDefined();
+      expect(d(err).text).toBe("Connection failed");
+    });
+
+    test("resets to idle on ws-closed while authenticating", () => {
+      sidebarSend("create-room");
+
+      overlaySend("http-response", {
+        ok: true,
+        status: 200,
+        body: {
+          roomCode: "ABC123",
+          secret: "testsecret",
+          wsUrl: "wss://watchparty.example.com/ws/ABC123",
+          invite: "ABC123:testsecret",
+        },
+      });
+
+      overlaySend("ws-open");
+      sidebarPosted = [];
+
+      overlaySend("ws-closed", { code: 1006, reason: "" });
+
+      const err = lastSidebarPosted("sb-error");
+      expect(err).toBeDefined();
+      expect(d(err).text).toBe("Connection failed");
+
+      const state = findSidebarPosted("sb-state");
+      expect(state.some((m) => d(m).view === "idle")).toBe(true);
+    });
+
     test("shows reconnecting state on ws-reconnecting while connected", () => {
       doCreateRoom();
       sidebarPosted = [];
@@ -544,19 +747,30 @@ describe("main connection state", () => {
   });
 
   describe("copy-invite", () => {
-    test("logs invite when room exists", () => {
+    test("sends sb-copy-text to sidebar when room exists", () => {
       doCreateRoom();
-      logMessages = [];
+      sidebarPosted = [];
 
       sidebarSend("copy-invite");
 
-      expect(logMessages.some((m) => m.includes("ABC123:testsecret"))).toBe(true);
+      const copy = lastSidebarPosted("sb-copy-text");
+      expect(copy).toBeDefined();
+      expect(d(copy).text).toBe("ABC123:testsecret");
+    });
+
+    test("shows OSD on copy-invite", () => {
+      doCreateRoom();
+      osdMessages = [];
+
+      sidebarSend("copy-invite");
+
+      expect(osdMessages.some((m) => m.includes("copied"))).toBe(true);
     });
 
     test("does nothing when no room", () => {
-      logMessages = [];
+      sidebarPosted = [];
       sidebarSend("copy-invite");
-      expect(logMessages.filter((m) => m.includes("invite"))).toEqual([]);
+      expect(findSidebarPosted("sb-copy-text")).toEqual([]);
     });
   });
 });

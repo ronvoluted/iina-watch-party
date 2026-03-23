@@ -144,3 +144,9 @@ iina.onMessage("sb-connecting-text", function (data) {
     connectingText.textContent = data.text;
   }
 });
+
+iina.onMessage("sb-copy-text", function (data) {
+  if (data && data.text && navigator.clipboard) {
+    navigator.clipboard.writeText(data.text).catch(function () {});
+  }
+});
