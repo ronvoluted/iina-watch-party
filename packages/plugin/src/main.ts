@@ -53,8 +53,10 @@ let connState: ConnectionState = "idle";
 let room: RoomContext | null = null;
 let syncEngine: SyncEngine | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-/** Cryptographically random session ID to prevent prediction/hijacking. */
-const sessionId = `s-${crypto.randomUUID()}`;
+/** Random session ID — uses crypto.randomUUID() where available, with a
+ *  fallback for JavaScriptCore environments (IINA plugin runtime) that lack
+ *  the Web Crypto API. */
+const sessionId = `s-${typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`}`;
 let msgSeq = 0;
 let reconnecting = false;
 /** URL of the file loaded when the room session started, for mid-session change detection. */
