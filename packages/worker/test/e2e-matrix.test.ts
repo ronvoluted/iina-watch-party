@@ -5,7 +5,7 @@
  * message relay → validation → sync scenarios → teardown.
  *
  * Covers the matrix of:
- *  - All relay message types (play, pause, seek, speed, heartbeat, state, warning, goodbye)
+ *  - All relay message types (play, pause, seek, speed, heartbeat, state, goodbye)
  *  - Both relay directions (host→guest, guest→host)
  *  - Auth flows (new, reconnect, replacement, room full)
  *  - File mismatch detection through auth metadata
@@ -17,7 +17,7 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { SELF } from "cloudflare:test";
-import { roomCreateLimiter } from "../src/index.js";
+import { roomCreateLimiter, roomLookupLimiter } from "../src/index.js";
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -127,6 +127,7 @@ async function setupRoom(prefix: string): Promise<{
 describe("E2E test matrix", () => {
   beforeEach(() => {
     roomCreateLimiter.reset();
+    roomLookupLimiter.reset();
   });
 
   // ════════════════════════════════════════════════════════════════
@@ -176,18 +177,11 @@ describe("E2E test matrix", () => {
           expect(m.positionMs).toBe(0);
           expect(m.paused).toBe(true);
         },
-      },
-      {
-        type: "warning",
-        fields: { code: "peer-buffering", message: "Peer is buffering" },
-        check: (m: Record<string, unknown>) => {
-          expect(m.code).toBe("peer-buffering");
-          expect(m.message).toBe("Peer is buffering");
-        },
+        hostOnly: true,
       },
     ];
 
-    for (const { type, fields, check } of relayTypes) {
+    for (const { type, fields, check, hostOnly } of relayTypes) {
       it(`relays ${type} from host to guest`, async () => {
         const { hostWs, guestWs, guestMsgs } = await setupRoom(
           `h2g-${type}`,
@@ -204,21 +198,39 @@ describe("E2E test matrix", () => {
         guestWs.close();
       });
 
-      it(`relays ${type} from guest to host`, async () => {
-        const { hostWs, guestWs, hostMsgs } = await setupRoom(
-          `g2h-${type}`,
-        );
+      if (hostOnly) {
+        it(`rejects ${type} from guest to host (host-only)`, async () => {
+          const { hostWs, guestWs, guestMsgs } = await setupRoom(
+            `g2h-${type}`,
+          );
 
-        guestWs.send(makeMessage(type, `g2h-${type}-guest`, fields));
-        await tick();
+          guestWs.send(makeMessage(type, `g2h-${type}-guest`, fields));
+          await tick();
 
-        const relayed = hostMsgs.get().find((m) => m.type === type);
-        expect(relayed).toBeDefined();
-        check(relayed!);
+          const err = guestMsgs.get().find((m) => m.type === "error");
+          expect(err).toBeDefined();
+          expect(err!.code).toBe("forbidden");
 
-        hostWs.close();
-        guestWs.close();
-      });
+          hostWs.close();
+          guestWs.close();
+        });
+      } else {
+        it(`relays ${type} from guest to host`, async () => {
+          const { hostWs, guestWs, hostMsgs } = await setupRoom(
+            `g2h-${type}`,
+          );
+
+          guestWs.send(makeMessage(type, `g2h-${type}-guest`, fields));
+          await tick();
+
+          const relayed = hostMsgs.get().find((m) => m.type === type);
+          expect(relayed).toBeDefined();
+          check(relayed!);
+
+          hostWs.close();
+          guestWs.close();
+        });
+      }
     }
   });
 
@@ -246,9 +258,9 @@ describe("E2E test matrix", () => {
 
       const authOk2 = msgs2.get().find((m) => m.type === "auth-ok");
       expect(authOk2!.role).toBe("guest");
-      const participants2 = authOk2!.participants as { sessionId: string; role: string }[];
+      const participants2 = authOk2!.participants as { participantId: string; role: string }[];
       expect(participants2.length).toBeGreaterThan(0);
-      expect(participants2[0]).toHaveProperty("sessionId");
+      expect(participants2[0]).toHaveProperty("participantId");
       expect(participants2[0]).toHaveProperty("role");
 
       // Host should receive peer-joined
@@ -279,7 +291,7 @@ describe("E2E test matrix", () => {
       const authOk = msgs3.get().find((m) => m.type === "auth-ok");
       expect(authOk).toBeDefined();
       expect(authOk!.role).toBe("guest");
-      const participants = authOk!.participants as { sessionId: string; role: string }[];
+      const participants = authOk!.participants as { participantId: string; role: string }[];
       expect(participants.length).toBe(2); // host + first guest already present
 
       ws1.close();
@@ -342,9 +354,9 @@ describe("E2E test matrix", () => {
       const authOk = msgs3.get().find((m) => m.type === "auth-ok");
       expect(authOk).toBeDefined();
       expect(authOk!.role).toBe("guest");
-      const participants = authOk!.participants as { sessionId: string; role: string }[];
+      const participants = authOk!.participants as { participantId: string; role: string }[];
       expect(participants.length).toBeGreaterThan(0);
-      expect(participants[0]).toHaveProperty("sessionId");
+      expect(participants[0]).toHaveProperty("participantId");
       expect(participants[0]).toHaveProperty("role");
 
       ws1.close();

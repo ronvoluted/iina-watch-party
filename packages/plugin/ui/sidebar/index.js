@@ -149,10 +149,18 @@ iina.onMessage("sb-warning", function (data) {
     warningSection.classList.add("hidden");
     return;
   }
-  if (data.text.indexOf("<") !== -1) {
-    warningText.innerHTML = data.text;
+  warningText.textContent = "";
+  // Server warning messages may include a "Warning:" prefix that should be bold.
+  // Build DOM nodes instead of innerHTML to prevent XSS from relayed content.
+  var text = data.text;
+  var prefixMatch = text.match(/^Warning:\s*/);
+  if (prefixMatch) {
+    var bold = document.createElement("strong");
+    bold.textContent = "Warning:";
+    warningText.appendChild(bold);
+    warningText.appendChild(document.createTextNode(" " + text.slice(prefixMatch[0].length)));
   } else {
-    warningText.textContent = data.text;
+    warningText.textContent = text;
   }
   warningSection.classList.remove("hidden");
 });
@@ -278,11 +286,33 @@ iina.onMessage("ws-send", function (data) {
 // ── HTTP fetch bridge ────────────────────────────────────────────────
 // The sidebar webview has browser fetch(); the plugin main entry does not.
 
+/** Stored backend origin for fetch allowlisting. Set by main entry before fetches. */
+let allowedFetchOrigin = null;
+
+iina.onMessage("sb-set-fetch-origin", function (data) {
+  if (data && data.origin) {
+    allowedFetchOrigin = data.origin;
+  }
+});
+
 iina.onMessage("sb-fetch", function (data) {
   if (!data || !data.url) {
     iina.postMessage("sb-fetch-response", { ok: false, error: "sb-fetch requires a url" });
     return;
   }
+
+  // Validate URL against the allowed backend origin
+  try {
+    const parsed = new URL(data.url);
+    if (allowedFetchOrigin && parsed.origin !== allowedFetchOrigin) {
+      iina.postMessage("sb-fetch-response", { ok: false, error: "URL not allowed" });
+      return;
+    }
+  } catch (_) {
+    iina.postMessage("sb-fetch-response", { ok: false, error: "Invalid URL" });
+    return;
+  }
+
   const opts = { method: data.method || "GET" };
   if (data.headers) opts.headers = data.headers;
   if (data.body) opts.body = typeof data.body === "string" ? data.body : JSON.stringify(data.body);

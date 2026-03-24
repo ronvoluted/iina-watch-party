@@ -218,7 +218,8 @@ function doJoinRoom(roomCode = "ABCDEF") {
       type: "auth-ok",
       role: "guest",
       roomCode: "ABCDEF",
-      participants: [{ sessionId: "host-session", role: "host", displayName: "Host" }],
+      participantId: "p-guest",
+      participants: [{ participantId: "p-host", role: "host", displayName: "Host" }],
       expiresAtMs: Date.now() + 3600000,
     }),
   });
@@ -682,7 +683,7 @@ describe("main connection state", () => {
       sidebarPosted = [];
 
       sidebarSend("ws-message", {
-        data: JSON.stringify({ type: "presence", event: "peer-joined", participantSessionId: "guest-session", role: "guest", displayName: "Guest" }),
+        data: JSON.stringify({ type: "presence", event: "peer-joined", participantId: "guest-session", role: "guest", displayName: "Guest" }),
       });
 
       const participants = lastSidebarPosted("sb-participants");
@@ -696,7 +697,7 @@ describe("main connection state", () => {
       sidebarPosted = [];
 
       sidebarSend("ws-message", {
-        data: JSON.stringify({ type: "presence", event: "peer-left", participantSessionId: "guest-session", role: "guest" }),
+        data: JSON.stringify({ type: "presence", event: "peer-left", participantId: "guest-session", role: "guest" }),
       });
 
       const participants = lastSidebarPosted("sb-participants");
@@ -710,7 +711,7 @@ describe("main connection state", () => {
       osdMessages = [];
 
       sidebarSend("ws-message", {
-        data: JSON.stringify({ type: "presence", event: "peer-left", participantSessionId: "guest-session", role: "guest" }),
+        data: JSON.stringify({ type: "presence", event: "peer-left", participantId: "guest-session", role: "guest" }),
       });
 
       expect(osdMessages.some((m) => m.includes("disconnected"))).toBe(true);
@@ -721,7 +722,7 @@ describe("main connection state", () => {
       sidebarPosted = [];
 
       sidebarSend("ws-message", {
-        data: JSON.stringify({ type: "presence", event: "peer-replaced", participantSessionId: "guest-session-2", role: "guest", displayName: "Guest2" }),
+        data: JSON.stringify({ type: "presence", event: "peer-replaced", participantId: "guest-session-2", role: "guest", displayName: "Guest2" }),
       });
 
       const participants = lastSidebarPosted("sb-participants");
@@ -740,7 +741,7 @@ describe("main connection state", () => {
       coreStatus.paused = false;
       coreStatus.speed = 1.25;
 
-      serverSend({ type: "presence", event: "peer-joined", participantSessionId: "guest-session", role: "guest" });
+      serverSend({ type: "presence", event: "peer-joined", participantId: "guest-session", role: "guest" });
 
       const msg = lastSentProtocol();
       expect(msg).toBeDefined();
@@ -759,7 +760,7 @@ describe("main connection state", () => {
       coreStatus.paused = true;
       coreStatus.speed = 1.0;
 
-      serverSend({ type: "presence", event: "peer-replaced", participantSessionId: "guest-session", role: "guest" });
+      serverSend({ type: "presence", event: "peer-replaced", participantId: "guest-session", role: "guest" });
 
       const msg = lastSentProtocol();
       expect(msg).toBeDefined();
@@ -775,7 +776,7 @@ describe("main connection state", () => {
       overlayPosted = [];
       sidebarPosted = [];
 
-      serverSend({ type: "presence", event: "peer-left", participantSessionId: "guest-session", role: "guest" });
+      serverSend({ type: "presence", event: "peer-left", participantId: "guest-session", role: "guest" });
 
       expect(findSidebarPosted("ws-send")).toEqual([]);
     });
@@ -785,7 +786,7 @@ describe("main connection state", () => {
       overlayPosted = [];
       sidebarPosted = [];
 
-      serverSend({ type: "presence", event: "peer-joined", participantSessionId: "host-session", role: "host" });
+      serverSend({ type: "presence", event: "peer-joined", participantId: "host-session", role: "host" });
 
       // Guest should not send a state message
       const sends = findSidebarPosted("ws-send");
@@ -822,7 +823,8 @@ describe("main connection state", () => {
           type: "auth-ok",
           role: "host",
           roomCode: "ABC123",
-          participants: [{ sessionId: "guest-session", role: "guest", displayName: "Guest" }],
+          participantId: "p-host",
+          participants: [{ participantId: "p-guest", role: "guest", displayName: "Guest" }],
           expiresAtMs: Date.now() + 3600000,
         }),
       });
@@ -860,7 +862,7 @@ describe("main connection state", () => {
       overlayPosted = [];
       sidebarPosted = [];
 
-      serverSend({ type: "presence", event: "peer-joined", participantSessionId: "guest-session", role: "guest" });
+      serverSend({ type: "presence", event: "peer-joined", participantId: "guest-session", role: "guest" });
 
       const msg = lastSentProtocol();
       expect(msg).toBeDefined();
@@ -1360,7 +1362,7 @@ describe("main connection state", () => {
       // Sync engine thinks we're at 10s, host says 15s (5000ms > 2000ms threshold)
       serverSend({
         type: "heartbeat",
-        sessionId: "host-session",
+        sessionId: "p-host",
         positionMs: 15000,
         paused: false,
         speed: 1.0,
@@ -1373,7 +1375,7 @@ describe("main connection state", () => {
       // Sync engine at 10s, host at 10.5s (500ms < 2000ms threshold)
       serverSend({
         type: "heartbeat",
-        sessionId: "host-session",
+        sessionId: "p-host",
         positionMs: 10500,
         paused: false,
         speed: 1.0,
@@ -1386,7 +1388,7 @@ describe("main connection state", () => {
     test("guest corrects speed mismatch from heartbeat", () => {
       serverSend({
         type: "heartbeat",
-        sessionId: "host-session",
+        sessionId: "p-host",
         positionMs: 10000,
         paused: false,
         speed: 1.5,
@@ -1409,7 +1411,7 @@ describe("main connection state", () => {
 
       serverSend({
         type: "heartbeat",
-        sessionId: "guest-session",
+        sessionId: "p-guest",
         positionMs: 50000,
         paused: false,
         speed: 1.0,
@@ -1550,7 +1552,8 @@ describe("main connection state", () => {
         type: "auth-ok",
         role: "host",
         roomCode: "ABC123",
-        participants: [{ sessionId: "guest-session", role: "guest", displayName: "Guest" }],
+        participantId: "p-host",
+        participants: [{ participantId: "p-guest", role: "guest", displayName: "Guest" }],
         expiresAtMs: Date.now() + 3600000,
       });
 
@@ -1656,7 +1659,7 @@ describe("main connection state", () => {
       // Send a heartbeat from host with buffering: true
       serverSend({
         type: "heartbeat",
-        sessionId: "host-session",
+        sessionId: "p-host",
         positionMs: 10000,
         paused: false,
         speed: 1,
@@ -1675,7 +1678,7 @@ describe("main connection state", () => {
       // Start buffering
       serverSend({
         type: "heartbeat",
-        sessionId: "host-session",
+        sessionId: "p-host",
         positionMs: 10000,
         paused: false,
         speed: 1,
@@ -1687,7 +1690,7 @@ describe("main connection state", () => {
       // Stop buffering
       serverSend({
         type: "heartbeat",
-        sessionId: "host-session",
+        sessionId: "p-host",
         positionMs: 11000,
         paused: false,
         speed: 1,

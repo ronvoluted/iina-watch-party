@@ -131,10 +131,11 @@ describe("Worker runtime", () => {
   // ── Warning message relay ───────────────────────────────────
 
   describe("warning relay", () => {
-    it("relays warning message between peers", async () => {
+    it("rejects peer-sent warning messages (server-only type)", async () => {
       const { roomCode } = await createRoom();
 
       const ws1 = await connectWs(roomCode);
+      const msgs1 = collectMessages(ws1);
       ws1.send(authPayload("session-warn-host"));
       await tick();
 
@@ -142,6 +143,7 @@ describe("Worker runtime", () => {
       const msgs2 = collectMessages(ws2);
       ws2.send(authPayload("session-warn-guest"));
       await tick();
+      msgs1.get().length = 0;
       msgs2.get().length = 0;
 
       ws1.send(
@@ -152,9 +154,14 @@ describe("Worker runtime", () => {
       );
       await tick();
 
+      // Warning should NOT be relayed to peer
       const relayed = msgs2.get().find((m) => m.type === "warning");
-      expect(relayed).toBeDefined();
-      expect(relayed!.code).toBe("drift-detected");
+      expect(relayed).toBeUndefined();
+
+      // Sender should receive an error
+      const err = msgs1.get().find((m) => m.type === "error");
+      expect(err).toBeDefined();
+      expect(err!.code).toBe("invalid-type");
 
       ws1.close();
       ws2.close();

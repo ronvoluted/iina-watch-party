@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { SELF, env } from "cloudflare:test";
+import { roomCreateLimiter, roomLookupLimiter } from "../src/index.js";
 import type { Env } from "../src/index.js";
 
 const typedEnv = env as Env;
@@ -18,6 +19,11 @@ function initRequest(body: unknown) {
 }
 
 describe("Room Durable Object", () => {
+  beforeEach(() => {
+    roomCreateLimiter.reset();
+    roomLookupLimiter.reset();
+  });
+
   // ── Initialization ──────────────────────────────────────────
 
   describe("POST /init", () => {

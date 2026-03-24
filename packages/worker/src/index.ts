@@ -21,10 +21,19 @@ const MAX_CODE_RETRIES = 5;
 const ROOM_CREATE_RATE_LIMIT_WINDOW_MS = 60_000;
 const ROOM_CREATE_RATE_LIMIT_MAX = 10;
 
+/** Rate limit: max 30 room status/join checks per IP per 60-second window. */
+const ROOM_LOOKUP_RATE_LIMIT_WINDOW_MS = 60_000;
+const ROOM_LOOKUP_RATE_LIMIT_MAX = 30;
+
 /** Exported for test access (reset between tests). */
 export const roomCreateLimiter = new IpRateLimiter(
   ROOM_CREATE_RATE_LIMIT_WINDOW_MS,
   ROOM_CREATE_RATE_LIMIT_MAX,
+);
+
+export const roomLookupLimiter = new IpRateLimiter(
+  ROOM_LOOKUP_RATE_LIMIT_WINDOW_MS,
+  ROOM_LOOKUP_RATE_LIMIT_MAX,
 );
 
 /** Prune stale entries every N requests. */
@@ -193,6 +202,7 @@ export default {
     requestCount++;
     if (requestCount % PRUNE_INTERVAL === 0) {
       roomCreateLimiter.prune();
+      roomLookupLimiter.prune();
     }
 
     // POST /api/rooms — create room
@@ -209,6 +219,10 @@ export default {
       if (request.method !== "GET") {
         return jsonResponse({ error: "Method not allowed" }, 405);
       }
+      const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+      if (!roomLookupLimiter.check(ip)) {
+        return jsonResponse({ error: "Too many requests" }, 429);
+      }
       return handleRoomStatus(env, apiRoomCode);
     }
 
@@ -217,6 +231,10 @@ export default {
     if (roomCode !== null) {
       if (request.method !== "GET") {
         return jsonResponse({ error: "Method not allowed" }, 405);
+      }
+      const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+      if (!roomLookupLimiter.check(ip)) {
+        return jsonResponse({ error: "Too many requests" }, 429);
       }
       return handleWebSocketUpgrade(request, env, roomCode);
     }

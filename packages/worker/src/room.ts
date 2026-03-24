@@ -25,6 +25,9 @@ const MAX_MESSAGE_SIZE_BYTES = 8192;
 const PROTOCOL_VERSION = 2;
 const MAX_PARTICIPANTS = 8;
 
+/** Maximum display name length (server-enforced). */
+const MAX_DISPLAY_NAME_LENGTH = 64;
+
 /** Duration tolerance for file mismatch detection (5 seconds). */
 const FILE_DURATION_TOLERANCE_MS = 5000;
 
@@ -42,7 +45,6 @@ const RELAY_TYPES: ReadonlySet<string> = new Set([
   "speed",
   "heartbeat",
   "state",
-  "warning",
   "goodbye",
 ]);
 
@@ -59,6 +61,8 @@ interface FileMetadata {
 interface WsAttachment {
   authenticated: boolean;
   sessionId: string;
+  /** Opaque ID exposed to peers instead of sessionId. */
+  participantId: string;
   role: string;
   connectedAtMs: number;
   file?: FileMetadata;
@@ -107,7 +111,8 @@ export class Room extends DurableObject {
     this.ctx.storage.sql.exec(
       `CREATE TABLE IF NOT EXISTS participants (
         session_id TEXT PRIMARY KEY,
-        role TEXT NOT NULL
+        role TEXT NOT NULL,
+        participant_id TEXT NOT NULL DEFAULT ''
       )`,
     );
   }
@@ -150,10 +155,9 @@ export class Room extends DurableObject {
     }
 
     // Size check
-    if (new TextEncoder().encode(message).byteLength > MAX_MESSAGE_SIZE_BYTES) {
-      roomLog("warn", "Rejected oversized message", {
-        bytes: new TextEncoder().encode(message).byteLength,
-      });
+    const messageBytes = new TextEncoder().encode(message).byteLength;
+    if (messageBytes > MAX_MESSAGE_SIZE_BYTES) {
+      roomLog("warn", "Rejected oversized message", { bytes: messageBytes });
       this.sendServerMessage(ws, "error", {
         code: "message-too-large",
         message: `Exceeds ${MAX_MESSAGE_SIZE_BYTES} bytes`,
@@ -224,9 +228,33 @@ export class Room extends DurableObject {
       return;
     }
 
+    // Role-based restrictions: only host may send state snapshots
+    if (type === "state" && att.role !== "host") {
+      this.sendServerMessage(ws, "error", {
+        code: "forbidden",
+        message: "Only host may send state messages",
+      });
+      return;
+    }
+
+    // Basic body validation for relay messages
+    const bodyErr = this.validateRelayBody(type, parsed);
+    if (bodyErr) {
+      roomLog("warn", "Rejected invalid relay body", { type, error: bodyErr });
+      this.sendServerMessage(ws, "error", {
+        code: "invalid-body",
+        message: bodyErr,
+      });
+      return;
+    }
+
+    // Replace sender's sessionId with their opaque participantId before relay
+    parsed.sessionId = att.participantId;
+    const sanitized = JSON.stringify(parsed);
+
     // Goodbye: relay, notify, remove participant, close
     if (type === "goodbye") {
-      this.relayToPeer(ws, message);
+      this.relayToPeer(ws, sanitized);
       this.notifyPeerLeft(ws);
       if (att.sessionId) {
         this.ctx.storage.sql.exec(
@@ -246,7 +274,7 @@ export class Room extends DurableObject {
     if (parsed.cause !== undefined) logCtx.cause = parsed.cause;
     roomLog("info", "Relay", logCtx);
 
-    this.relayToPeer(ws, message);
+    this.relayToPeer(ws, sanitized);
   }
 
   async webSocketClose(
@@ -350,6 +378,7 @@ export class Room extends DurableObject {
     server.serializeAttachment({
       authenticated: false,
       sessionId: "",
+      participantId: "",
       role: "",
       connectedAtMs: Date.now(),
     } satisfies WsAttachment);
@@ -410,7 +439,8 @@ export class Room extends DurableObject {
     }
 
     const sessionId = parsed.sessionId as string;
-    const displayName = typeof parsed.displayName === "string" ? parsed.displayName : undefined;
+    const rawDisplayName = typeof parsed.displayName === "string" ? parsed.displayName : undefined;
+    const displayName = rawDisplayName ? rawDisplayName.slice(0, MAX_DISPLAY_NAME_LENGTH) : undefined;
 
     // Extract file metadata from auth message
     const rawFile =
@@ -425,15 +455,25 @@ export class Room extends DurableObject {
 
     // Check if this sessionId is a known participant (reconnection)
     const existingRows = this.ctx.storage.sql
-      .exec("SELECT role FROM participants WHERE session_id = ?", sessionId)
+      .exec("SELECT role, participant_id FROM participants WHERE session_id = ?", sessionId)
       .toArray();
 
     // Get currently connected authenticated peers (excluding this socket)
     const connectedPeers = this.getAuthenticatedPeers(ws);
 
     if (existingRows.length > 0) {
-      // Reconnection — restore stored role
+      // Reconnection — restore stored role and participantId
       const role = existingRows[0].role as string;
+      let participantId = existingRows[0].participant_id as string;
+      // Backfill participantId for legacy rows
+      if (!participantId) {
+        participantId = crypto.randomUUID().slice(0, 8);
+        this.ctx.storage.sql.exec(
+          "UPDATE participants SET participant_id = ? WHERE session_id = ?",
+          participantId,
+          sessionId,
+        );
+      }
 
       // Replace stale socket with same sessionId if still connected
       const staleIdx = connectedPeers.findIndex(
@@ -446,7 +486,7 @@ export class Room extends DurableObject {
         wasReplaced = true;
       }
 
-      this.setAuthenticated(ws, att, sessionId, role, file, displayName);
+      this.setAuthenticated(ws, att, sessionId, participantId, role, file, displayName);
 
       roomLog("info", "Auth OK (reconnect)", {
         roomCode,
@@ -456,7 +496,7 @@ export class Room extends DurableObject {
       });
 
       const participants = connectedPeers.map((p) => ({
-        sessionId: p.att.sessionId,
+        participantId: p.att.participantId,
         role: p.att.role,
         displayName: p.att.displayName,
       }));
@@ -465,6 +505,7 @@ export class Room extends DurableObject {
         role,
         roomCode,
         expiresAtMs,
+        participantId,
         participants,
       });
 
@@ -474,7 +515,7 @@ export class Room extends DurableObject {
           this.sendServerMessage(peer.ws, "presence", {
             event,
             role,
-            participantSessionId: sessionId,
+            participantId,
             displayName,
           });
         }
@@ -510,20 +551,22 @@ export class Room extends DurableObject {
 
     // Assign role: first = host, second = guest
     const role = participantCount === 0 ? "host" : "guest";
+    const participantId = crypto.randomUUID().slice(0, 8);
 
     // Register in participants table
     this.ctx.storage.sql.exec(
-      "INSERT INTO participants (session_id, role) VALUES (?, ?)",
+      "INSERT INTO participants (session_id, role, participant_id) VALUES (?, ?, ?)",
       sessionId,
       role,
+      participantId,
     );
 
-    this.setAuthenticated(ws, att, sessionId, role, file, displayName);
+    this.setAuthenticated(ws, att, sessionId, participantId, role, file, displayName);
 
     roomLog("info", "Auth OK (new)", { roomCode, sessionId, role });
 
     const participants = connectedPeers.map((p) => ({
-      sessionId: p.att.sessionId,
+      participantId: p.att.participantId,
       role: p.att.role,
       displayName: p.att.displayName,
     }));
@@ -532,6 +575,7 @@ export class Room extends DurableObject {
       role,
       roomCode,
       expiresAtMs,
+      participantId,
       participants,
     });
 
@@ -540,7 +584,7 @@ export class Room extends DurableObject {
         this.sendServerMessage(peer.ws, "presence", {
           event: "peer-joined",
           role,
-          participantSessionId: sessionId,
+          participantId,
           displayName,
         });
       }
@@ -633,12 +677,69 @@ export class Room extends DurableObject {
     });
   }
 
+  // ── Relay Validation ────────────────────────────────────────
+
+  /**
+   * Validate the body fields of a relayed message. Returns an error string
+   * or null if valid. This prevents malicious clients from injecting garbage
+   * values (negative positions, absurd speeds, extra fields) into peers.
+   */
+  private validateRelayBody(type: string, obj: Record<string, unknown>): string | null {
+    switch (type) {
+      case "play":
+      case "pause":
+        return requireNonNegativeFinite(obj.positionMs, "positionMs");
+      case "seek": {
+        const posErr = requireNonNegativeFinite(obj.positionMs, "positionMs");
+        if (posErr) return posErr;
+        if (obj.cause !== "user" && obj.cause !== "drift-correction") {
+          return "invalid field: cause";
+        }
+        return null;
+      }
+      case "speed":
+        return requirePositiveFinite(obj.speed, "speed");
+      case "heartbeat": {
+        const posErr = requireNonNegativeFinite(obj.positionMs, "positionMs");
+        if (posErr) return posErr;
+        if (typeof obj.paused !== "boolean") return "invalid field: paused";
+        const spdErr = requirePositiveFinite(obj.speed, "speed");
+        if (spdErr) return spdErr;
+        if (obj.buffering !== undefined && typeof obj.buffering !== "boolean") {
+          return "invalid field: buffering";
+        }
+        if (obj.seeking !== undefined && typeof obj.seeking !== "boolean") {
+          return "invalid field: seeking";
+        }
+        return null;
+      }
+      case "state": {
+        const validReasons = ["initial", "reconnect", "manual"];
+        if (typeof obj.reason !== "string" || !validReasons.includes(obj.reason)) {
+          return "invalid field: reason";
+        }
+        const posErr = requireNonNegativeFinite(obj.positionMs, "positionMs");
+        if (posErr) return posErr;
+        if (typeof obj.paused !== "boolean") return "invalid field: paused";
+        const spdErr = requirePositiveFinite(obj.speed, "speed");
+        if (spdErr) return spdErr;
+        return null;
+      }
+      case "goodbye":
+        if (typeof obj.reason !== "string") return "invalid field: reason";
+        return null;
+      default:
+        return null;
+    }
+  }
+
   // ── Helpers ──────────────────────────────────────────────────
 
   private getAttachment(ws: WebSocket): WsAttachment {
     return (ws.deserializeAttachment() ?? {
       authenticated: false,
       sessionId: "",
+      participantId: "",
       role: "",
       connectedAtMs: 0,
     }) as WsAttachment;
@@ -648,6 +749,7 @@ export class Room extends DurableObject {
     ws: WebSocket,
     att: WsAttachment,
     sessionId: string,
+    participantId: string,
     role: string,
     file?: FileMetadata,
     displayName?: string,
@@ -656,6 +758,7 @@ export class Room extends DurableObject {
       ...att,
       authenticated: true,
       sessionId,
+      participantId,
       role,
       file,
       displayName,
@@ -720,11 +823,11 @@ export class Room extends DurableObject {
 
     let message: string;
     if (nameMismatch && durationDiffStr) {
-      message = "<strong>Warning:</strong> filenames and durations of videos being watched do not match";
+      message = "Warning: filenames and durations of videos being watched do not match";
     } else if (nameMismatch) {
-      message = "<strong>Warning:</strong> filenames of videos being watched do not match";
+      message = "Warning: filenames of videos being watched do not match";
     } else {
-      message = "<strong>Warning:</strong> durations of videos being watched do not match";
+      message = "Warning: durations of videos being watched do not match";
     }
     this.sendServerMessage(newWs, "warning", { code: "file-mismatch", message });
     this.sendServerMessage(refPeer.ws, "warning", { code: "file-mismatch", message });
@@ -781,7 +884,7 @@ export class Room extends DurableObject {
         this.sendServerMessage(ws, "presence", {
           event: "peer-left",
           role: closedAtt.role,
-          participantSessionId: closedAtt.sessionId,
+          participantId: closedAtt.participantId,
           displayName: closedAtt.displayName,
         });
       }
@@ -834,6 +937,20 @@ export class Room extends DurableObject {
 }
 
 // ── Module helpers ──────────────────────────────────────────────
+
+function requireNonNegativeFinite(v: unknown, name: string): string | null {
+  if (typeof v !== "number" || !Number.isFinite(v) || v < 0) {
+    return `invalid field: ${name}`;
+  }
+  return null;
+}
+
+function requirePositiveFinite(v: unknown, name: string): string | null {
+  if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
+    return `invalid field: ${name}`;
+  }
+  return null;
+}
 
 function jsonResponse(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), {

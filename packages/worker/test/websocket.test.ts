@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { SELF, env } from "cloudflare:test";
-import { roomCreateLimiter } from "../src/index.js";
+import { roomCreateLimiter, roomLookupLimiter } from "../src/index.js";
 import type { Env } from "../src/index.js";
 
 const typedEnv = env as Env;
@@ -88,6 +88,7 @@ function makeMessage(
 describe("Room WebSocket lifecycle", () => {
   beforeEach(() => {
     roomCreateLimiter.reset();
+    roomLookupLimiter.reset();
   });
 
   // ── Auth ──────────────────────────────────────────────────────
@@ -130,13 +131,13 @@ describe("Room WebSocket lifecycle", () => {
       expect(authOk2!.role).toBe("guest");
       expect(authOk2!.participants).toBeInstanceOf(Array);
       expect(
-        (authOk2!.participants as { sessionId: string; role: string }[]).length,
+        (authOk2!.participants as { participantId: string; role: string }[]).length,
       ).toBeGreaterThan(0);
       expect(
-        (authOk2!.participants as { sessionId: string; role: string }[])[0],
-      ).toHaveProperty("sessionId");
+        (authOk2!.participants as { participantId: string; role: string }[])[0],
+      ).toHaveProperty("participantId");
       expect(
-        (authOk2!.participants as { sessionId: string; role: string }[])[0],
+        (authOk2!.participants as { participantId: string; role: string }[])[0],
       ).toHaveProperty("role");
 
       // Host should receive presence notification
@@ -209,7 +210,7 @@ describe("Room WebSocket lifecycle", () => {
       expect(authOk!.role).toBe("guest");
       expect(authOk!.participants).toBeInstanceOf(Array);
       expect(
-        (authOk!.participants as { sessionId: string; role: string }[]).length,
+        (authOk!.participants as { participantId: string; role: string }[]).length,
       ).toBeGreaterThan(0);
 
       ws1.close();
@@ -247,13 +248,13 @@ describe("Room WebSocket lifecycle", () => {
       expect(authOk!.role).toBe("host");
       expect(authOk!.participants).toBeInstanceOf(Array);
       expect(
-        (authOk!.participants as { sessionId: string; role: string }[]).length,
+        (authOk!.participants as { participantId: string; role: string }[]).length,
       ).toBeGreaterThan(0);
       expect(
-        (authOk!.participants as { sessionId: string; role: string }[])[0],
-      ).toHaveProperty("sessionId");
+        (authOk!.participants as { participantId: string; role: string }[])[0],
+      ).toHaveProperty("participantId");
       expect(
-        (authOk!.participants as { sessionId: string; role: string }[])[0],
+        (authOk!.participants as { participantId: string; role: string }[])[0],
       ).toHaveProperty("role");
 
       // Guest receives peer-replaced

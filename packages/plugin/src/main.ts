@@ -53,15 +53,18 @@ let connState: ConnectionState = "idle";
 let room: RoomContext | null = null;
 let syncEngine: SyncEngine | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-const sessionId = `s-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+/** Cryptographically random session ID to prevent prediction/hijacking. */
+const sessionId = `s-${crypto.randomUUID()}`;
 let msgSeq = 0;
 let reconnecting = false;
 /** URL of the file loaded when the room session started, for mid-session change detection. */
 let sessionFileUrl: string | null = null;
-/** Tracks other participants in the room by sessionId. */
+/** Tracks other participants in the room by participantId (opaque server-assigned ID). */
 const knownParticipants = new Map<string, { role: Role; displayName?: string }>();
-/** Session ID of the host participant (for filtering heartbeats). */
-let hostSessionId: string | null = null;
+/** Participant ID of the host (for filtering heartbeats). */
+let hostParticipantId: string | null = null;
+/** Our own participantId assigned by the server. */
+let selfParticipantId: string | null = null;
 
 const HEARTBEAT_INTERVAL_MS = 5000;
 
@@ -120,7 +123,10 @@ function sendProtocol(msg: Record<string, unknown>) {
 }
 
 function toWsUrl(backendUrl: string, roomCode: string): string {
-  return backendUrl.replace(/^http/, "ws") + `/ws/${roomCode}`;
+  const url = new URL(backendUrl);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  // Ensure no trailing slash before appending path
+  return `${url.origin}/ws/${roomCode}`;
 }
 
 function getPositionMs(): number {
@@ -218,7 +224,8 @@ function resetState() {
   reconnecting = false;
   sessionFileUrl = null;
   knownParticipants.clear();
-  hostSessionId = null;
+  hostParticipantId = null;
+  selfParticipantId = null;
   stopHeartbeat();
   setSidebarView("idle");
   sidebar.postMessage("sb-status", { text: "Not connected" });
@@ -260,6 +267,12 @@ function registerSidebarHandlers() {
     setSidebarView("connecting");
     sidebar.postMessage("sb-connecting-text", { text: "Creating room…" });
 
+    // Set the allowed fetch origin so the sidebar rejects unexpected URLs
+    try {
+      sidebar.postMessage("sb-set-fetch-origin", { origin: new URL(backendUrl).origin });
+    } catch {
+      // URL parsing failed — will be caught by fetch itself
+    }
     sidebar.postMessage("sb-fetch", {
       url: `${backendUrl}/api/rooms`,
       method: "POST",
@@ -503,20 +516,21 @@ function onAuthOk(msg: Record<string, unknown>) {
 
   const role = msg.role as Role;
   const roomCode = msg.roomCode as string | undefined;
-  const participants = (msg.participants as Array<{ sessionId: string; role: string; displayName?: string }>) ?? [];
+  const participants = (msg.participants as Array<{ participantId: string; role: string; displayName?: string }>) ?? [];
 
   room.role = role;
   if (roomCode) room.roomCode = roomCode;
+  selfParticipantId = (msg.participantId as string) ?? null;
 
   // Populate participant tracking
   knownParticipants.clear();
-  hostSessionId = null;
+  hostParticipantId = null;
   for (const p of participants) {
-    knownParticipants.set(p.sessionId, { role: p.role as Role, displayName: p.displayName });
-    if (p.role === "host") hostSessionId = p.sessionId;
+    knownParticipants.set(p.participantId, { role: p.role as Role, displayName: p.displayName });
+    if (p.role === "host") hostParticipantId = p.participantId;
   }
-  // If we are the host, record our own sessionId
-  if (role === "host") hostSessionId = sessionId;
+  // If we are the host, record our own participantId
+  if (role === "host" && selfParticipantId) hostParticipantId = selfParticipantId;
 
   initSync(role);
   sessionFileUrl = core.status.url ?? null;
@@ -540,8 +554,8 @@ function onAuthOk(msg: Record<string, unknown>) {
 }
 
 function sendParticipantsToSidebar() {
-  const list = Array.from(knownParticipants.entries()).map(([sid, p]) => ({
-    sessionId: sid,
+  const list = Array.from(knownParticipants.entries()).map(([pid, p]) => ({
+    participantId: pid,
     role: p.role,
     displayName: p.displayName,
   }));
@@ -560,24 +574,25 @@ function onAuthError(msg: Record<string, unknown>) {
 
 function onGoodbye(msg: Record<string, unknown>) {
   const reason = msg.reason as string | undefined;
-  const peerSid = msg.sessionId as string | undefined;
   logger.info(`Peer goodbye: reason=${reason ?? "unknown"}`);
-  if (peerSid) knownParticipants.delete(peerSid);
+  // Goodbye is relayed with the sender's sessionId in the envelope, but we
+  // don't track peers by sessionId. The presence "peer-left" event (which
+  // carries participantId) handles participant map cleanup.
   sendParticipantsToSidebar();
   osd.show("Watch Party: Peer left the room");
 }
 
 function onPresence(msg: Record<string, unknown>) {
   const event = msg.event as string;
-  const peerSid = msg.participantSessionId as string | undefined;
+  const peerId = msg.participantId as string | undefined;
   const peerRole = (msg.role as Role) ?? "guest";
   const peerDisplayName = msg.displayName as string | undefined;
-  logger.info(`Presence: ${event} (${peerRole}) sid=${peerSid ?? "?"}`);
+  logger.info(`Presence: ${event} (${peerRole}) pid=${peerId ?? "?"}`);
 
   if (event === "peer-joined" || event === "peer-replaced") {
-    if (peerSid) {
-      knownParticipants.set(peerSid, { role: peerRole, displayName: peerDisplayName });
-      if (peerRole === "host") hostSessionId = peerSid;
+    if (peerId) {
+      knownParticipants.set(peerId, { role: peerRole, displayName: peerDisplayName });
+      if (peerRole === "host") hostParticipantId = peerId;
     }
     sendParticipantsToSidebar();
     const label = peerDisplayName ?? "Peer";
@@ -586,7 +601,7 @@ function onPresence(msg: Record<string, unknown>) {
       sendStateSnapshot("initial");
     }
   } else if (event === "peer-left") {
-    if (peerSid) knownParticipants.delete(peerSid);
+    if (peerId) knownParticipants.delete(peerId);
     sendParticipantsToSidebar();
     const label = peerDisplayName ?? "Peer";
     osd.show(`Watch Party: ${label} disconnected`);
@@ -640,12 +655,13 @@ function onRemotePlayback(msg: Record<string, unknown>) {
       };
       break;
     case "heartbeat": {
-      const fromSid = msg.sessionId as string;
-      const fromRole = (knownParticipants.get(fromSid)?.role
-        ?? (fromSid === hostSessionId ? "host" : "guest")) as Role;
+      // sessionId in relayed messages is the sender's opaque participantId
+      const fromPid = msg.sessionId as string;
+      const fromRole = (knownParticipants.get(fromPid)?.role
+        ?? (fromPid === hostParticipantId ? "host" : "guest")) as Role;
       action = {
         kind: "remote-heartbeat" as const,
-        fromSessionId: fromSid,
+        fromSessionId: fromPid,
         fromRole,
         positionMs: msg.positionMs as number,
         paused: msg.paused as boolean,
