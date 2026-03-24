@@ -239,6 +239,11 @@ export default {
       return handleWebSocketUpgrade(request, env, roomCode);
     }
 
+    // Root path — minimal landing response
+    if (url.pathname === "/") {
+      return new Response("🦆", { headers: CORS_HEADERS });
+    }
+
     return new Response("Not Found", { status: 404, headers: CORS_HEADERS });
   },
 } satisfies ExportedHandler<Env>;
