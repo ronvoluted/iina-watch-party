@@ -125,10 +125,11 @@ function sendProtocol(msg: Record<string, unknown>) {
 }
 
 function toWsUrl(backendUrl: string, roomCode: string): string {
-  const url = new URL(backendUrl);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  // Ensure no trailing slash before appending path
-  return `${url.origin}/ws/${roomCode}`;
+  // Use string manipulation instead of URL constructor — IINA's JavaScriptCore
+  // runtime does not provide the Web API URL class.
+  const base = backendUrl.replace(/\/+$/, "");
+  const wsBase = base.replace(/^http/, "ws");
+  return `${wsBase}/ws/${roomCode}`;
 }
 
 function getPositionMs(): number {
@@ -269,11 +270,12 @@ function registerSidebarHandlers() {
     setSidebarView("connecting");
     sidebar.postMessage("sb-connecting-text", { text: "Creating room…" });
 
-    // Set the allowed fetch origin so the sidebar rejects unexpected URLs
-    try {
-      sidebar.postMessage("sb-set-fetch-origin", { origin: new URL(backendUrl).origin });
-    } catch {
-      // URL parsing failed — will be caught by fetch itself
+    // Set the allowed fetch origin so the sidebar rejects unexpected URLs.
+    // Extract origin via string manipulation — URL constructor is unavailable in
+    // IINA's JavaScriptCore runtime.
+    const originMatch = backendUrl.match(/^(https?:\/\/[^/]+)/);
+    if (originMatch) {
+      sidebar.postMessage("sb-set-fetch-origin", { origin: originMatch[1] });
     }
     sidebar.postMessage("sb-fetch", {
       url: `${backendUrl}/api/rooms`,
